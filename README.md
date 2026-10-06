@@ -115,7 +115,8 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://<your-app>.vercel.app/api/c
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `BOT_TOKEN` | yes | From @BotFather. |
-| `FIREBASE_SERVICE_ACCOUNT_KEY` | yes | Service-account JSON, raw or base64. |
+| `FIREBASE_SERVICE_ACCOUNT_KEY` | one of A/B | Service-account JSON, raw or base64. If set but unparseable, the three vars below are used instead. |
+| `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY` | one of A/B | Alternative to the combined key — three plain values, easier to paste correctly. |
 | `AMAZON_AFFILIATE_TAG` | recommended | Default Amazon tag. |
 | `AMAZON_AFFILIATE_TAG_<TLD>` | no | Per-domain override, e.g. `_IN`, `_CO_UK`. |
 | `FLIPKART_AFFILIATE_ID` | recommended | Flipkart `affid`. |

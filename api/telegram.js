@@ -371,18 +371,27 @@ async function readUpdate(req) {
   });
 }
 
+/** True if either credential style is present in the environment. */
+function firebaseCredentialsPresent() {
+  return (
+    Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY) ||
+    Boolean(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY)
+  );
+}
+
 /**
  * Classify the Firebase init failure WITHOUT echoing any credential bytes.
  * The env var may be a web config (no private_key), malformed JSON, etc.
  */
 function firebaseReason() {
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) return 'env_missing';
+  if (!firebaseCredentialsPresent()) return 'env_missing';
   if (!fbError) return null;
   const m = String(fbError);
   if (/could not be parsed/i.test(m)) return 'invalid_json';
   if (/private_key/i.test(m)) return 'missing_private_key';
   if (/client_email/i.test(m)) return 'missing_client_email';
   if (/project_id/i.test(m)) return 'missing_project_id';
+  if (/credentials are not set/i.test(m)) return 'env_missing';
   return 'init_failed';
 }
 
@@ -406,7 +415,7 @@ async function buildDiagnostic(req) {
     config: {
       botToken: Boolean(process.env.BOT_TOKEN),
       webhookSecret: Boolean(process.env.TELEGRAM_WEBHOOK_SECRET),
-      firebase: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY) && !fbError,
+      firebase: firebaseCredentialsPresent() && !fbError,
       webAppUrl: Boolean(process.env.WEB_APP_URL),
       cronSecret: Boolean(process.env.CRON_SECRET),
     },

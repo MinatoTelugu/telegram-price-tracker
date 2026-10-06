@@ -1,0 +1,29 @@
+name: Price check (external cron)
+
+# Vercel's Hobby plan only allows daily cron jobs, so this workflow provides the
+# more frequent 6-hourly price checks for free.
+#
+# Set two repository secrets (Settings -> Secrets and variables -> Actions):
+#   APP_URL      -> e.g. https://your-project.vercel.app  (no trailing slash)
+#   CRON_SECRET  -> the same value as your Vercel CRON_SECRET env var
+#
+# You can also run it on demand from the Actions tab (workflow_dispatch).
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger /api/cron
+        run: |
+          if [ -z "${{ secrets.APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "APP_URL or CRON_SECRET repository secret is not set."
+            exit 1
+          fi
+          curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron" | head -c 4000

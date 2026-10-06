@@ -89,10 +89,18 @@ Verify with `.../getWebhookInfo`. You can also `GET /api/telegram` — it return
 `Telegram webhook is live.` as a liveness check.
 
 ### 7. Cron
-`vercel.json` already schedules `GET /api/cron` every 6 hours and Vercel sends
-`Authorization: Bearer $CRON_SECRET`. **Note:** on the Vercel **Hobby** plan
-crons run at most once per day and only 2 are allowed — change the schedule to
-`0 9 * * *` if you are on Hobby. **Pro** allows the 6-hourly schedule.
+`vercel.json` schedules `GET /api/cron` **once a day at 03:00 UTC (08:30 IST)**
+and Vercel sends `Authorization: Bearer $CRON_SECRET`.
+
+Why only daily: the Vercel **Hobby** plan allows at most **one cron run per
+day** and only 2 cron jobs — anything more frequent (e.g. `0 */6 * * *`) is
+rejected at deploy time. To check prices more often you have two options:
+
+- **Upgrade to Pro** and set the schedule to `0 */6 * * *` (every 6 hours).
+- **Stay free:** add an external scheduler. The included GitHub Actions workflow
+  (`.github/workflows/cron.yml`) hits `/api/cron` every 6 hours using the
+  `CRON_SECRET` and `APP_URL` repository secrets — no Pro plan needed. It simply
+  runs alongside the daily Vercel cron.
 
 You can trigger a run manually any time:
 ```bash

@@ -141,6 +141,28 @@ function stopTokenFor(docId) {
   return n.toString(36).padStart(12, '0').slice(0, 12);
 }
 
+/**
+ * Who may run /diag. Prefers ADMIN_USER_ID; otherwise the first person to run
+ * /diag becomes the admin and is remembered in Firestore. The command is not
+ * listed in the bot menu, so only the owner knows it exists.
+ */
+async function resolveAdminId(ctx) {
+  const configured = String(process.env.ADMIN_USER_ID || '').trim();
+  if (configured) return configured;
+  if (!db || !ctx.from) return null;
+  try {
+    const ref = db.collection('_config').doc('admin');
+    const snap = await ref.get();
+    if (snap.exists) return String(snap.data().userId || '');
+    const id = String(ctx.from.id);
+    await ref.set({ userId: id, setAt: new Date() }, { merge: true });
+    return id;
+  } catch (err) {
+    console.warn('resolveAdminId failed:', err.message);
+    return null;
+  }
+}
+
 const LIST_DIVIDER = '_______________________________________';
 
 /**
@@ -510,9 +532,18 @@ function registerHandlers(bot) {
     }
   });
 
-  // Self-diagnosis: reports which credentials are present and what Firestore
-  // actually says, so a config problem can be read straight from the chat.
+  // Self-diagnosis — ADMIN ONLY, and never listed in the bot menu. Non-admins
+  // get no reply at all, so the command is invisible to everyone else.
   bot.command('diag', async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      const adminId = await resolveAdminId(ctx);
+      if (!adminId || String(ctx.from.id) !== String(adminId)) return;
+    } catch (err) {
+      console.error('diag auth check failed:', err.message);
+      return;
+    }
+
     const lines = ['🩺 <b>Diagnostics</b>', ''];
     try {
       lines.push('BOT_TOKEN: ' + (process.env.BOT_TOKEN ? 'set' : 'MISSING'));

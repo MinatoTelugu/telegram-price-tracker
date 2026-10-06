@@ -56,6 +56,14 @@ function escapeHtml(value = '') {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Reject if a promise doesn't settle within ms, so a hung API call can't stall a handler. */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+}
+
 /** Stable Firestore doc id for a product: e.g. "amazon_B08N5WRWNW". */
 function productDocId(result) {
   return result.marketplace + '_' + result.productId;
@@ -207,7 +215,14 @@ const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track tha
 function registerHandlers(bot) {
   bot.start(async (ctx) => {
     try {
-      if (db && ctx.from) await upsertUser(ctx.from);
+      // Never let a Firestore hiccup stop the welcome from being sent.
+      if (db && ctx.from) {
+        try {
+          await upsertUser(ctx.from);
+        } catch (err) {
+          console.error('start upsert failed:', err.message);
+        }
+      }
       const caption =
         '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +
         'Send me an Amazon or Flipkart product link and I will:\n' +
@@ -223,7 +238,8 @@ function registerHandlers(bot) {
       const logoUrl = botLogoUrl();
       if (logoUrl && typeof ctx.replyWithPhoto === 'function') {
         try {
-          await ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard });
+          // Timeout so a slow/unreachable image can never stall the welcome.
+          await withTimeout(ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard }), 8000);
           return;
         } catch (err) {
           console.warn('welcome photo failed, falling back to text:', err.message);
@@ -232,6 +248,12 @@ function registerHandlers(bot) {
       await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('start handler failed', err);
+      // Absolute fallback: always say something.
+      try {
+        await ctx.reply('Welcome! Send me an Amazon or Flipkart product link to start tracking prices.');
+      } catch (_) {
+        /* nothing more we can do */
+      }
     }
   });
 

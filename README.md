@@ -85,8 +85,11 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/setWebhook" \
   -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
   -d "drop_pending_updates=true"
 ```
-Verify with `.../getWebhookInfo`. You can also `GET /api/telegram` — it returns
-`Telegram webhook is live.` as a liveness check.
+Verify with `.../getWebhookInfo`. You can also open `GET /api/telegram` in a
+browser — it returns a JSON status report showing which environment variables
+are present and whether Firebase initialised, plus a `problems` list. Add
+`?key=<CRON_SECRET>` to also see the live `getWebhookInfo` result (this is how
+you confirm the webhook URL and spot any `last_error_message`).
 
 ### 7. Cron
 `vercel.json` schedules `GET /api/cron` **once a day at 03:00 UTC (08:30 IST)**

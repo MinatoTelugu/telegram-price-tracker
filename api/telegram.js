@@ -14,16 +14,40 @@
  * which is unreliable behind Vercel's routing. Handling it ourselves lets us
  * verify the Telegram secret header explicitly and normalise the body.
  *
+ * Diagnostics: a GET returns a small JSON status report (which env vars are
+ * present, whether Firebase initialised, and — when you pass ?key=<CRON_SECRET>
+ * — the live Telegram getWebhookInfo). Open it in a browser to debug setup.
+ *
  * Env vars used here:
  *   BOT_TOKEN                  -> Telegram bot token from @BotFather
  *   TELEGRAM_WEBHOOK_SECRET    -> the secret_token you pass to setWebhook (optional)
- *   WEB_APP_URL                -> base URL of the price-history page (STEP 5)
+ *   WEB_APP_URL                -> base URL of the price-history page
+ *   FIREBASE_SERVICE_ACCOUNT_KEY -> Firestore credentials
+ *   CRON_SECRET                -> gates the detailed diagnostic
  * ---------------------------------------------------------------------------
  */
 
 const { Telegraf, Markup } = require('telegraf');
-const { db, admin, COLLECTIONS } = require('../lib/firebase');
+const axios = require('axios');
 const { convertAffiliateLink, isSupportedLink } = require('../lib/affiliate');
+
+// Load Firebase defensively: a bad/missing credential must NOT crash the whole
+// module, or even the liveness GET would 500 and give us nothing to debug with.
+let fb = null;
+let fbError = null;
+try {
+  fb = require('../lib/firebase');
+} catch (err) {
+  fbError = err.message;
+  console.error('Firebase failed to initialise at load time:', err.message);
+}
+const db = fb && fb.db;
+const admin = fb && fb.admin;
+const COLLECTIONS = (fb && fb.COLLECTIONS) || {
+  USERS: 'users',
+  PRODUCTS: 'products',
+  PRICE_HISTORY: 'price_history',
+};
 
 const MARKETPLACE_LABEL = { amazon: '🛒 Amazon', flipkart: '🛍️ Flipkart' };
 
@@ -64,9 +88,8 @@ async function upsertUser(from) {
 
 /**
  * Add the product to Firestore and subscribe this user to it.
- * Price fields are left null here; the cron job (STEP 4) fills them on its
- * first run. We deliberately keep ONE product doc per marketplace+productId so
- * price history is shared, with a `subscribers` array of Telegram user ids.
+ * Price fields are left null here; the cron job fills them on its first run.
+ * One product doc per marketplace+productId, so price history is shared.
  */
 async function trackProduct(result, from) {
   const docId = productDocId(result);
@@ -108,7 +131,7 @@ async function untrackProduct(docId, from) {
   );
 }
 
-/** Inline keyboard: "Price Track" (opens the STEP 5 web page) + "Untrack". */
+/** Inline keyboard: "Price Track" (opens the web page) + "Untrack". */
 function buildTrackKeyboard(docId) {
   const buttons = [];
   if (process.env.WEB_APP_URL) {
@@ -144,10 +167,12 @@ const CONVERT_ERRORS = {
   empty_input: 'Please send a link.',
 };
 
+const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track that link. Please try again later.';
+
 function registerHandlers(bot) {
   bot.start(async (ctx) => {
     try {
-      if (ctx.from) await upsertUser(ctx.from);
+      if (db && ctx.from) await upsertUser(ctx.from);
       await ctx.reply(
         '👋 <b>Welcome to Price Tracker!</b>\n\n' +
           'Send me any Amazon or Flipkart product link and I will:\n' +
@@ -184,6 +209,10 @@ function registerHandlers(bot) {
   bot.command(['mytracks', 'list'], async (ctx) => {
     try {
       if (!ctx.from) return;
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
       const snap = await db
         .collection(COLLECTIONS.PRODUCTS)
         .where('subscribers', 'array-contains', String(ctx.from.id))
@@ -217,6 +246,10 @@ function registerHandlers(bot) {
       const docId = (ctx.message.text || '').split(/\s+/).slice(1).join(' ').trim();
       if (!docId) {
         await ctx.reply('Usage: /untrack <id>\nGet the id from /mytracks.');
+        return;
+      }
+      if (!db) {
+        await ctx.reply(DB_DOWN);
         return;
       }
       const snap = await db.collection(COLLECTIONS.PRODUCTS).doc(docId).get();
@@ -256,6 +289,11 @@ function registerHandlers(bot) {
         return;
       }
 
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+
       await upsertUser(ctx.from);
       const docId = await trackProduct(result, ctx.from);
 
@@ -276,6 +314,10 @@ function registerHandlers(bot) {
   bot.action(/^untrack:(.+)$/, async (ctx) => {
     try {
       if (!ctx.from) return;
+      if (!db) {
+        if (ctx.answerCbQuery) await ctx.answerCbQuery('Database not configured').catch(() => {});
+        return;
+      }
       const docId = ctx.match[1];
       await untrackProduct(docId, ctx.from);
       if (ctx.answerCbQuery) await ctx.answerCbQuery('Stopped tracking').catch(() => {});
@@ -315,12 +357,73 @@ function parseBody(body) {
   return body;
 }
 
+/** Read the update, whether Vercel pre-parsed the body or not. */
+async function readUpdate(req) {
+  if (req.body != null) return parseBody(req.body);
+  // Fallback: pull the raw stream ourselves.
+  return await new Promise((resolve) => {
+    let data = '';
+    req.on('data', (chunk) => {
+      data += chunk;
+    });
+    req.on('end', () => resolve(parseBody(data)));
+    req.on('error', () => resolve(null));
+  });
+}
+
+/** Human-readable setup problems, safe to expose publicly (no secrets). */
+function configProblems() {
+  const problems = [];
+  if (!process.env.BOT_TOKEN) problems.push('BOT_TOKEN is not set');
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) problems.push('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
+  else if (fbError) problems.push('Firebase failed to initialise (check FIREBASE_SERVICE_ACCOUNT_KEY)');
+  if (!process.env.WEB_APP_URL) problems.push('WEB_APP_URL is not set (Price Track button will be hidden)');
+  return problems;
+}
+
+async function buildDiagnostic(req) {
+  const diag = {
+    ok: true,
+    message: 'Telegram webhook is live.',
+    config: {
+      botToken: Boolean(process.env.BOT_TOKEN),
+      webhookSecret: Boolean(process.env.TELEGRAM_WEBHOOK_SECRET),
+      firebase: Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY) && !fbError,
+      webAppUrl: Boolean(process.env.WEB_APP_URL),
+      cronSecret: Boolean(process.env.CRON_SECRET),
+    },
+    problems: configProblems(),
+  };
+
+  // Deeper check, gated by CRON_SECRET so we don't leak anything publicly.
+  const key = (req.query && (req.query.key || req.query.secret)) || '';
+  const authorized = process.env.CRON_SECRET && key === process.env.CRON_SECRET;
+  if (authorized && process.env.BOT_TOKEN) {
+    try {
+      const info = await axios.get(
+        'https://api.telegram.org/bot' + process.env.BOT_TOKEN + '/getWebhookInfo',
+        { timeout: 8000 }
+      );
+      diag.telegram = info.data && info.data.result;
+    } catch (err) {
+      diag.telegram = { error: err.message };
+    }
+  }
+  return diag;
+}
+
 module.exports = async (req, res) => {
-  // GET (or anything non-POST) acts as a liveness probe for setup/debugging.
+  // GET (or anything non-POST) returns a diagnostic report.
   if (req.method !== 'POST') {
+    let diag;
+    try {
+      diag = await buildDiagnostic(req);
+    } catch (err) {
+      diag = { ok: true, message: 'Telegram webhook is live.', problems: ['diagnostic failed: ' + err.message] };
+    }
     res.statusCode = 200;
-    res.setHeader('Content-Type', 'text/plain');
-    res.end('Telegram webhook is live.');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify(diag));
     return;
   }
 
@@ -329,14 +432,16 @@ module.exports = async (req, res) => {
   if (secret) {
     const received = req.headers['x-telegram-bot-api-secret-token'];
     if (received !== secret) {
+      console.warn('Rejected update: secret token mismatch (is TELEGRAM_WEBHOOK_SECRET the same as the secret_token you set?)');
       res.statusCode = 401;
       res.end('unauthorized');
       return;
     }
   }
 
-  const update = parseBody(req.body);
+  const update = await readUpdate(req);
   if (!update) {
+    console.warn('Received a request with no parseable update body.');
     res.statusCode = 200; // ack so Telegram does not retry a malformed payload
     res.end();
     return;
@@ -376,4 +481,6 @@ module.exports._internals = {
   registerHandlers,
   getBot,
   parseBody,
+  readUpdate,
+  configProblems,
 };

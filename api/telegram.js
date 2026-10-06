@@ -156,11 +156,13 @@ async function untrackProduct(docId, from) {
 /** Telegram channel the "Today's Deals" button points at. */
 const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
 
-/** Public URL of the bot logo (served from public/logo.jpg). */
+/**
+ * Optional welcome image. Only used when BOT_LOGO_URL is explicitly set to a
+ * public image URL — we no longer guess at /logo.jpg, because when Telegram
+ * cannot fetch the image it costs a slow failed request on every /start.
+ */
 function botLogoUrl() {
-  if (process.env.BOT_LOGO_URL) return process.env.BOT_LOGO_URL;
-  if (process.env.WEB_APP_URL) return process.env.WEB_APP_URL.replace(/\/$/, '') + '/logo.jpg';
-  return null;
+  return process.env.BOT_LOGO_URL || null;
 }
 
 /**
@@ -221,45 +223,46 @@ const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track tha
 
 function registerHandlers(bot) {
   bot.start(async (ctx) => {
-    try {
-      // Never let a Firestore hiccup stop the welcome from being sent.
-      if (db && ctx.from) {
-        try {
-          await upsertUser(ctx.from);
-        } catch (err) {
-          console.error('start upsert failed:', err.message);
-        }
-      }
-      const caption =
-        '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +
-        'Send me an Amazon or Flipkart product link and I will:\n' +
-        '• convert it into a clean affiliate link\n' +
-        '• start tracking its price for 30 days\n' +
-        '• alert you when the price drops\n\n' +
-        '<b>Commands</b>\n' +
-        '/mytracks – your tracked products\n' +
-        '/untrack &lt;id&gt; – stop tracking one\n' +
-        '/help – how it works';
-      const keyboard = Markup.inlineKeyboard([[Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)]]);
+    const caption =
+      '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +
+      'Send me an Amazon or Flipkart product link and I will:\n' +
+      '• convert it into a clean affiliate link\n' +
+      '• start tracking its price for 30 days\n' +
+      '• alert you when the price drops\n\n' +
+      '<b>Commands</b>\n' +
+      '/mytracks – your tracked products\n' +
+      '/untrack &lt;id&gt; – stop tracking one\n' +
+      '/help – how it works';
+    const keyboard = Markup.inlineKeyboard([[Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)]]);
 
-      const logoUrl = botLogoUrl();
+    // Reply FIRST so the welcome is instant; the DB write happens after it.
+    try {
+      const logoUrl = botLogoUrl(); // opt-in via BOT_LOGO_URL
       if (logoUrl && typeof ctx.replyWithPhoto === 'function') {
         try {
-          // Timeout so a slow/unreachable image can never stall the welcome.
-          await withTimeout(ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard }), 8000);
-          return;
+          await withTimeout(ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard }), 6000);
         } catch (err) {
           console.warn('welcome photo failed, falling back to text:', err.message);
+          await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
         }
+      } else {
+        await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
       }
-      await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('start handler failed', err);
-      // Absolute fallback: always say something.
       try {
         await ctx.reply('Welcome! Send me an Amazon or Flipkart product link to start tracking prices.');
       } catch (_) {
         /* nothing more we can do */
+      }
+    }
+
+    // Best-effort registration, after the reply has already gone out.
+    if (db && ctx.from) {
+      try {
+        await upsertUser(ctx.from);
+      } catch (err) {
+        console.error('start upsert failed:', err.message);
       }
     }
   });

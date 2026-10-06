@@ -141,6 +141,13 @@ async function untrackProduct(docId, from) {
 /** Telegram channel the "Today's Deals" button points at. */
 const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
 
+/** Public URL of the bot logo (served from public/logo.jpg). */
+function botLogoUrl() {
+  if (process.env.BOT_LOGO_URL) return process.env.BOT_LOGO_URL;
+  if (process.env.WEB_APP_URL) return process.env.WEB_APP_URL.replace(/\/$/, '') + '/logo.jpg';
+  return null;
+}
+
 /**
  * Inline keyboard, a 2x2 grid matching the reference layout:
  *   [ ✅ Buy Now ]        [ 🔴 Stop Tracking ]
@@ -201,17 +208,28 @@ function registerHandlers(bot) {
   bot.start(async (ctx) => {
     try {
       if (db && ctx.from) await upsertUser(ctx.from);
-      await ctx.reply(
-        '👋 <b>Welcome to Price Tracker!</b>\n\n' +
-          'Send me any Amazon or Flipkart product link and I will:\n' +
-          '• convert it into a clean affiliate link\n' +
-          '• start tracking its price for 30 days\n\n' +
-          '<b>Commands</b>\n' +
-          '/mytracks – list your tracked products\n' +
-          '/untrack &lt;id&gt; – stop tracking one\n' +
-          '/help – how it works',
-        { parse_mode: 'HTML' }
-      );
+      const caption =
+        '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +
+        'Send me an Amazon or Flipkart product link and I will:\n' +
+        '• convert it into a clean affiliate link\n' +
+        '• start tracking its price for 30 days\n' +
+        '• alert you when the price drops\n\n' +
+        '<b>Commands</b>\n' +
+        '/mytracks – your tracked products\n' +
+        '/untrack &lt;id&gt; – stop tracking one\n' +
+        '/help – how it works';
+      const keyboard = Markup.inlineKeyboard([[Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)]]);
+
+      const logoUrl = botLogoUrl();
+      if (logoUrl && typeof ctx.replyWithPhoto === 'function') {
+        try {
+          await ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard });
+          return;
+        } catch (err) {
+          console.warn('welcome photo failed, falling back to text:', err.message);
+        }
+      }
+      await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });
     } catch (err) {
       console.error('start handler failed', err);
     }

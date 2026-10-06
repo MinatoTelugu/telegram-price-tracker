@@ -138,6 +138,38 @@ async function processProduct(doc) {
   return { id: doc.id, status: 'checked', price: newPrice, oldPrice, alerted };
 }
 
+/**
+ * Keep the webhook pointed at THIS deployment's own /api/telegram URL.
+ * If it has been mangled (stray query string / line break) this repairs it on
+ * the next scheduled run, so a bad registration can't silently kill the bot.
+ */
+async function ensureWebhook(req) {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return { ok: false, reason: 'no_token' };
+
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim();
+  if (!host) return { ok: false, reason: 'no_host' };
+  const expected = 'https://' + host + '/api/telegram';
+
+  try {
+    const info = await axios.get(
+      'https://api.telegram.org/bot' + token + '/getWebhookInfo',
+      { timeout: 8000 }
+    );
+    const current = info.data && info.data.result && info.data.result.url;
+    if (current === expected) return { ok: true, unchanged: true, url: expected };
+
+    const payload = { url: expected, drop_pending_updates: false };
+    if (process.env.TELEGRAM_WEBHOOK_SECRET) payload.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+    await axios.post('https://api.telegram.org/bot' + token + '/setWebhook', payload, { timeout: 8000 });
+    return { ok: true, repaired: true, was: current || null, url: expected };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
 module.exports = async (req, res) => {
   // Auth: Vercel Cron sends "Authorization: Bearer $CRON_SECRET".
   const secret = process.env.CRON_SECRET;
@@ -181,8 +213,12 @@ module.exports = async (req, res) => {
       }
     }
 
+    // Keep the webhook pointed at this deployment (self-heal if it was mangled).
+    const webhook = await ensureWebhook(req);
+
     const summary = {
       ok: true,
+      webhook,
       scanned: docs.length,
       processed: batch.length,
       checked: results.filter((r) => r.status === 'checked').length,

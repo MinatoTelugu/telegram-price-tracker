@@ -170,6 +170,30 @@ async function ensureWebhook(req) {
   }
 }
 
+/** Register the bot's command menu with Telegram (idempotent). */
+async function registerCommands() {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return { ok: false, reason: 'no_token' };
+  try {
+    await axios.post(
+      'https://api.telegram.org/bot' + token + '/setMyCommands',
+      {
+        commands: [
+          { command: 'start', description: 'Start the bot' },
+          { command: 'list', description: 'Your tracked products' },
+          { command: 'mytracks', description: 'Your tracked products' },
+          { command: 'untrack', description: 'Stop tracking a product' },
+          { command: 'help', description: 'How it works' },
+        ],
+      },
+      { timeout: 8000 }
+    );
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
 module.exports = async (req, res) => {
   // Auth: Vercel Cron sends "Authorization: Bearer $CRON_SECRET".
   const secret = process.env.CRON_SECRET;
@@ -215,10 +239,12 @@ module.exports = async (req, res) => {
 
     // Keep the webhook pointed at this deployment (self-heal if it was mangled).
     const webhook = await ensureWebhook(req);
+    const commands = await registerCommands();
 
     const summary = {
       ok: true,
       webhook,
+      commands,
       scanned: docs.length,
       processed: batch.length,
       checked: results.filter((r) => r.status === 'checked').length,

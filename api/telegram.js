@@ -29,6 +29,7 @@
 
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
+const crypto = require('crypto');
 const { convertAffiliateLink } = require('../lib/affiliate');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -67,6 +68,11 @@ function withTimeout(promise, ms) {
 /** Stable Firestore doc id for a product: e.g. "amazon_B08N5WRWNW". */
 function productDocId(result) {
   return result.marketplace + '_' + result.productId;
+}
+
+/** Short, lowercase per-product token used in the /stop_<token> command. */
+function stopTokenFor(docId) {
+  return crypto.createHash('sha1').update(String(docId)).digest('hex').slice(0, 10);
 }
 
 /**
@@ -116,6 +122,7 @@ async function trackProduct(result, from) {
     productId: result.productId,
     cleanUrl: result.cleanUrl,
     affiliateUrl: result.affiliateUrl,
+    stopToken: stopTokenFor(docId),
     subscribers: admin.firestore.FieldValue.arrayUnion(String(from.id)),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     active: true,
@@ -292,17 +299,28 @@ function registerHandlers(bot) {
         return;
       }
 
-      const lines = ['📋 <b>Your tracked products</b>', ''];
+      const lines = ['📋 <b>Tracking List</b>', ''];
       snap.docs.forEach((doc, i) => {
         const d = doc.data();
-        const price = d.lastPrice != null ? ' — ₹' + d.lastPrice : '';
-        lines.push(
-          i + 1 + '. ' + (MARKETPLACE_LABEL[d.marketplace] || d.marketplace) +
-            ' <code>' + escapeHtml(doc.id) + '</code>' + price
-        );
+        const token = d.stopToken || stopTokenFor(doc.id);
+        const title = d.title || d.productId || doc.id;
+        const market =
+          d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
+        const buy = d.affiliateUrl || d.cleanUrl;
+
+        lines.push(i + 1 + '. <b>' + escapeHtml(title) + '</b>');
+        if (buy) {
+          lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+        }
+        if (process.env.WEB_APP_URL) {
+          const hist = process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(doc.id);
+          lines.push('<a href="' + escapeHtml(hist) + '">View Price History</a>');
+        }
+        lines.push('Click /stop_' + token + ' to stop this product.');
+        lines.push('');
       });
-      lines.push('', 'Use /untrack &lt;id&gt; to stop tracking one.');
-      await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+      lines.push('🦋 <b>Total Products: ' + snap.size + '</b>');
+      await ctx.reply(lines.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
     } catch (err) {
       console.error('mytracks handler failed', err);
     }
@@ -331,6 +349,35 @@ function registerHandlers(bot) {
       });
     } catch (err) {
       console.error('untrack handler failed', err);
+    }
+  });
+
+  // Per-product stop, matching the reference "Click /stop_<id>" style.
+  bot.hears(/^\/stop_([a-z0-9]+)\b/i, async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+      const token = String(ctx.match[1]).toLowerCase();
+      const snap = await db
+        .collection(COLLECTIONS.PRODUCTS)
+        .where('stopToken', '==', token)
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        await ctx.reply('I could not find that product. Send /list to see your tracking list.');
+        return;
+      }
+      const doc = snap.docs[0];
+      const d = doc.data();
+      await untrackProduct(doc.id, ctx.from);
+      await ctx.reply('🛑 Stopped tracking <b>' + escapeHtml(d.title || d.productId || doc.id) + '</b>.', {
+        parse_mode: 'HTML',
+      });
+    } catch (err) {
+      console.error('stop handler failed', err);
     }
   });
 

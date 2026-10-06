@@ -131,15 +131,43 @@ async function untrackProduct(docId, from) {
   );
 }
 
-/** Inline keyboard: "Price Track" (opens the web page) + "Untrack". */
-function buildTrackKeyboard(docId) {
-  const buttons = [];
-  if (process.env.WEB_APP_URL) {
-    const base = process.env.WEB_APP_URL.replace(/\/$/, '');
-    buttons.push(Markup.button.url('📈 Price Track', base + '/?id=' + encodeURIComponent(docId)));
+/** Deals landing page for the product's marketplace. */
+function dealsUrl(marketplace) {
+  if (marketplace === 'amazon') {
+    const tag = process.env.AMAZON_AFFILIATE_TAG || '';
+    return 'https://www.amazon.in/deals' + (tag ? '?tag=' + encodeURIComponent(tag) : '');
   }
-  buttons.push(Markup.button.callback('🛑 Untrack', 'untrack:' + docId));
-  return Markup.inlineKeyboard(buttons);
+  if (marketplace === 'flipkart') return 'https://www.flipkart.com/offers-store';
+  return null;
+}
+
+/**
+ * Inline keyboard, arranged as a 2x2 grid to match the reference design:
+ *   [ ✅ Buy Now ↗ ]  [ 🔴 Stop Tracking ]
+ *   [ 📊 Price History ↗ ]  [ 🛍️ Today's Deals ↗ ]
+ *
+ * NOTE: Telegram inline buttons carry no styling — no colours, gradients or
+ * corner radius. Only the labels and the 2x2 layout can be matched here. The
+ * full visual design would need a Telegram Mini App (an HTML page).
+ */
+function buildTrackKeyboard(docId, result) {
+  const buyUrl = result && (result.affiliateUrl || result.cleanUrl);
+  const historyUrl = process.env.WEB_APP_URL
+    ? process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(docId)
+    : null;
+  const deals = result && dealsUrl(result.marketplace);
+
+  const row1 = [];
+  if (buyUrl) row1.push(Markup.button.url('✅ Buy Now ↗', buyUrl));
+  row1.push(Markup.button.callback('🔴 Stop Tracking', 'untrack:' + docId));
+
+  const row2 = [];
+  if (historyUrl) row2.push(Markup.button.url('📊 Price History ↗', historyUrl));
+  if (deals) row2.push(Markup.button.url("🛍️ Today's Deals ↗", deals));
+
+  const rows = [row1];
+  if (row2.length) rows.push(row2);
+  return Markup.inlineKeyboard(rows);
 }
 
 function formatTrackedProduct(result, docId) {
@@ -299,7 +327,7 @@ function registerHandlers(bot) {
 
       await ctx.reply(formatTrackedProduct(result, docId), {
         parse_mode: 'HTML',
-        ...buildTrackKeyboard(docId),
+        ...buildTrackKeyboard(docId, result),
       });
     } catch (err) {
       console.error('text handler failed', err);

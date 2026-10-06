@@ -58,6 +58,59 @@ function escapeHtml(value = '') {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * The site ORIGIN from WEB_APP_URL, discarding any path or query. This matters:
+ * if WEB_APP_URL were set to e.g. "https://host/api/telegram", the naive
+ * "WEB_APP_URL + '/?id='" build produced a broken link like
+ * "https://host/api/telegram/?id=...". Using the origin keeps links correct.
+ */
+function webAppBase() {
+  const raw = process.env.WEB_APP_URL;
+  if (!raw) return null;
+  try {
+    return new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw).origin;
+  } catch (err) {
+    return String(raw).replace(/\/+$/, '');
+  }
+}
+
+/** Turn a URL slug like "apple-iphone-15-blue-128-gb" into "Apple Iphone 15 Blue 128 Gb". */
+function prettifySlug(slug) {
+  const s = decodeURIComponent(String(slug)).replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s.length < 3) return null;
+  return s
+    .split(' ')
+    .map((w) => (/^[A-Z0-9]+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+/**
+ * Derive a product name straight from the link — no network needed.
+ * Flipkart links carry the name as the path slug, and Amazon links usually do
+ * too (e.g. /Samsung-Galaxy-M14-5G/dp/B0DFHCZMWY). This is the reliable
+ * fallback when the product page itself cannot be scraped (Amazon blocks us).
+ */
+function titleFromUrl(urlStr) {
+  let u;
+  try {
+    u = new URL(/^https?:\/\//i.test(urlStr) ? urlStr : 'https://' + urlStr);
+  } catch (err) {
+    return null;
+  }
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split('/').filter(Boolean);
+
+  if (host.includes('flipkart')) {
+    const i = parts.indexOf('p');
+    return i > 0 ? prettifySlug(parts[i - 1]) : null;
+  }
+  if (host.includes('amazon')) {
+    const i = parts.findIndex((p) => p === 'dp' || p === 'product' || p === 'd');
+    return i > 0 ? prettifySlug(parts[i - 1]) : null;
+  }
+  return null;
+}
+
 /** Reject if a promise doesn't settle within ms, so a hung API call can't stall a handler. */
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -117,28 +170,35 @@ async function sendTrackingList(ctx) {
       return;
     }
 
-    // Backfill any missing product titles so the list shows real names, not IDs.
-    // Bounded so the list stays quick even with many products.
+    // Fill in missing product names: derive from the link first (instant), then
+    // try the page if there is budget. Bounded so the list stays quick.
     let backfilled = 0;
     for (const it of items) {
-      if (it.data.title || backfilled >= 3) continue;
-      const src = it.data.cleanUrl || it.data.affiliateUrl;
-      if (!src) continue;
-      try {
-        const info = await withTimeout(fetchProduct(src, it.data.marketplace), 6000);
-        if (info && info.ok && info.title) {
-          it.data.title = info.title;
-          backfilled++;
-          if (it.doc.ref) {
-            try {
-              await it.doc.ref.set({ title: info.title }, { merge: true });
-            } catch (e) {
-              /* non-fatal */
-            }
+      if (it.data.title) continue;
+      const src = it.data.cleanUrl || it.data.affiliateUrl || '';
+
+      let got = titleFromUrl(src);
+      if (!got && src && backfilled < 3) {
+        try {
+          const info = await withTimeout(fetchProduct(src, it.data.marketplace), 6000);
+          if (info && info.ok && info.title) {
+            got = info.title;
+            backfilled++;
+          }
+        } catch (err) {
+          /* non-fatal — fall back to the id */
+        }
+      }
+
+      if (got) {
+        it.data.title = got;
+        if (it.doc.ref) {
+          try {
+            await it.doc.ref.set({ title: got }, { merge: true });
+          } catch (e) {
+            /* non-fatal */
           }
         }
-      } catch (err) {
-        /* non-fatal — fall back to the id */
       }
     }
 
@@ -146,12 +206,13 @@ async function sendTrackingList(ctx) {
     items.forEach((it, i) => {
       const d = it.data;
       const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
-      const title = d.title || d.productId || it.doc.id;
+      const title = d.title || titleFromUrl(d.cleanUrl || d.affiliateUrl || '') || d.productId || it.doc.id;
       const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
       const buy = d.affiliateUrl || d.cleanUrl;
-      const hist = process.env.WEB_APP_URL
-        ? process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(it.doc.id)
-        : null;
+      const hist = (function () {
+        const base = webAppBase();
+        return base ? base + '/?id=' + encodeURIComponent(it.doc.id) : null;
+      })();
 
       lines.push(i + 1 + '. <b>' + escapeHtml(title) + '</b>');
       lines.push('');
@@ -301,9 +362,8 @@ function botLogoUrl() {
  */
 function buildTrackKeyboard(docId, result) {
   const buyUrl = result && (result.affiliateUrl || result.cleanUrl);
-  const historyUrl = process.env.WEB_APP_URL
-    ? process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(docId)
-    : null;
+  const base = webAppBase();
+  const historyUrl = base ? base + '/?id=' + encodeURIComponent(docId) : null;
 
   const row1 = [];
   if (buyUrl) row1.push(Markup.button.url('✅ Buy Now', buyUrl));
@@ -531,7 +591,8 @@ function registerHandlers(bot) {
       await upsertUser(ctx.from);
 
       // Fetch the title/price now so the confirmation matches the reference.
-      let info = { title: null, price: null, currency: 'INR', imageUrl: null };
+      // Start from a name derived from the link, then let the page improve it.
+      let info = { title: titleFromUrl(url), price: null, currency: 'INR', imageUrl: null };
       try {
         const scraped = await withTimeout(
           fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
@@ -539,7 +600,7 @@ function registerHandlers(bot) {
         );
         if (scraped && scraped.ok) {
           info = {
-            title: scraped.title || null,
+            title: scraped.title || info.title,
             price: scraped.price,
             currency: scraped.currency || 'INR',
             imageUrl: scraped.imageUrl || null,
@@ -837,6 +898,8 @@ module.exports._internals = {
   escapeHtml,
   productDocId,
   extractUrl,
+  titleFromUrl,
+  webAppBase,
   upsertUser,
   trackProduct,
   untrackProduct,

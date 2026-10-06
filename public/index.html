@@ -4,143 +4,296 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Price History</title>
+<link rel="icon" href="/logo.jpg" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --txt:#e8eaed; --muted:#9aa4b2; --accent:#4f9cf9; --green:#34d399; --red:#f87171; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-         background:var(--bg); color:var(--txt); display:flex; justify-content:center; padding:24px 16px 48px; }
-  .wrap { width:100%; max-width:760px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px; }
-  h1 { font-size:18px; margin:0 0 4px; font-weight:600; }
-  .muted { color:var(--muted); font-size:13px; }
-  .price { font-size:34px; font-weight:700; margin:14px 0 2px; }
-  .delta { font-size:14px; }
-  .delta.down { color:var(--green); }
-  .delta.up { color:var(--red); }
-  .chart-box { position:relative; height:320px; margin-top:18px; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
-  .stat { flex:1 1 140px; background:#12151c; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-  .stat .k { color:var(--muted); font-size:12px; }
-  .stat .v { font-size:18px; font-weight:600; margin-top:2px; }
-  .cta { display:inline-block; margin-top:18px; background:var(--accent); color:#08121f; font-weight:600;
-         text-decoration:none; padding:11px 18px; border-radius:10px; }
-  .err { color:var(--red); }
-  .center { text-align:center; padding:40px 0; }
+  :root{
+    --bg:#0e1116; --card:#161a22; --card2:#1b202a; --line:#262c38;
+    --txt:#e9ecf1; --muted:#98a2b3; --accent:#22c55e; --accent2:#4f9cf9;
+    --red:#f87171; --amber:#fbbf24;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{width:100%;max-width:780px;margin:0 auto;padding:18px 16px 56px}
+
+  header.top{display:flex;align-items:center;gap:12px;padding:6px 0 18px}
+  header.top img{width:44px;height:44px;border-radius:12px;object-fit:cover}
+  header.top h1{font-size:19px;margin:0;font-weight:700}
+  header.top p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
+  .card h2{font-size:14px;margin:0 0 10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+
+  .search{display:flex;gap:10px;flex-wrap:wrap}
+  .search input{flex:1 1 240px;background:var(--card2);border:1px solid var(--line);color:var(--txt);
+                border-radius:10px;padding:12px 14px;font-size:14px;outline:none}
+  .search input:focus{border-color:var(--accent2)}
+  .search button{background:var(--accent2);color:#08121f;border:0;border-radius:10px;padding:12px 18px;
+                 font-weight:700;font-size:14px;cursor:pointer}
+  .hint{font-size:12px;color:var(--muted);margin-top:10px}
+  .hint b{color:var(--txt)}
+
+  .phead{display:flex;gap:14px;align-items:flex-start}
+  .phead img{width:78px;height:78px;border-radius:12px;object-fit:contain;background:#0b0e13;border:1px solid var(--line)}
+  .ptitle{font-size:16px;font-weight:700;line-height:1.35;margin:0}
+  .pmeta{font-size:12px;color:var(--muted);margin-top:4px}
+  .price{font-size:30px;font-weight:800;margin:12px 0 2px}
+  .mrp{color:var(--muted);text-decoration:line-through;font-size:15px;margin-left:8px}
+  .off{background:rgba(34,197,94,.15);color:var(--accent);border-radius:8px;padding:3px 8px;font-size:12px;
+       font-weight:700;margin-left:8px}
+
+  .verdict{margin-top:14px;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5;border:1px solid var(--line)}
+  .verdict.good{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.35)}
+  .verdict.bad{background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.35)}
+  .verdict.mid{background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.35)}
+  .verdict b{display:block;margin-bottom:4px;font-size:13px}
+
+  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}
+  .stat{flex:1 1 150px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat .k{color:var(--muted);font-size:12px}
+  .stat .v{font-size:18px;font-weight:700;margin-top:3px}
+
+  .chart-box{position:relative;height:300px;margin-top:6px}
+
+  .cta{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .btn{flex:1 1 160px;text-align:center;text-decoration:none;border-radius:12px;padding:14px 18px;font-weight:700;font-size:14px}
+  .btn.buy{background:var(--accent);color:#04180c}
+  .btn.visit{background:transparent;color:var(--txt);border:1px solid var(--line)}
+
+  .info dl{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;margin:0;font-size:13px}
+  .info dt{color:var(--muted)}
+  .info dd{margin:0;text-align:right}
+
+  footer{margin-top:22px;text-align:center;color:var(--muted);font-size:12px;line-height:1.7}
+  footer a{color:var(--muted);text-decoration:none;margin:0 8px}
+  .err{color:var(--red)}
+  .center{text-align:center;padding:28px 0;color:var(--muted)}
+  .hidden{display:none}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="card" id="card">
-    <div class="center muted" id="loading">Loading price history…</div>
+
+  <header class="top">
+    <img src="/logo.jpg" alt="Ai Price Alert Bot" onerror="this.style.display='none'" />
+    <div>
+      <h1>Price History</h1>
+      <p>Track the ups and downs of product prices</p>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>Find a product's price history</h2>
+    <div class="search">
+      <input id="linkInput" type="text" placeholder="Paste an Amazon or Flipkart product link" />
+      <button id="goBtn">Check</button>
+    </div>
+    <div class="hint">Supported: <b>Amazon</b> and <b>Flipkart</b>. Paste a product link and tap Check.</div>
+    <div id="searchMsg" class="hint err hidden"></div>
   </div>
+
+  <div id="loading" class="card center">Loading price history…</div>
+
+  <div id="result" class="hidden">
+    <div class="card">
+      <div class="phead">
+        <img id="pImg" alt="" class="hidden" />
+        <div style="flex:1">
+          <h2 style="margin-bottom:6px" id="pMarket">Product</h2>
+          <p class="ptitle" id="pTitle">—</p>
+          <div class="pmeta" id="pMeta"></div>
+        </div>
+      </div>
+      <div class="price"><span id="pPrice">—</span><span class="mrp hidden" id="pMrp"></span><span class="off hidden" id="pOff"></span></div>
+      <div id="verdict" class="verdict hidden"></div>
+      <div class="row">
+        <div class="stat"><div class="k">Lowest (30 days)</div><div class="v" id="sLow">—</div></div>
+        <div class="stat"><div class="k">Highest (30 days)</div><div class="v" id="sHigh">—</div></div>
+        <div class="stat"><div class="k">Data points</div><div class="v" id="sPts">0</div></div>
+      </div>
+      <div class="cta">
+        <a class="btn buy" id="buyBtn" href="#" target="_blank" rel="noopener">Buy now</a>
+        <a class="btn visit" id="visitBtn" href="#" target="_blank" rel="noopener">Visit store</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Price history graph</h2>
+      <div class="chart-box"><canvas id="chart"></canvas></div>
+      <div id="chartEmpty" class="center hidden">No price points recorded yet. Check back after the next scheduled run.</div>
+    </div>
+
+    <div class="card info">
+      <h2>Additional product info</h2>
+      <dl>
+        <dt>Store</dt><dd id="iStore">—</dd>
+        <dt>Product ID</dt><dd id="iId">—</dd>
+        <dt>Currency</dt><dd id="iCur">—</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div id="error" class="card center err hidden"></div>
+
+  <footer>
+    <div>
+      <a href="https://t.me/Ai_PriceAlert" target="_blank" rel="noopener">Telegram channel</a>
+      <a href="https://aipricealertbot.vercel.app/api/telegram" target="_blank" rel="noopener">Status</a>
+    </div>
+    <div style="margin-top:8px">Ai Price Alert Bot — price tracking for Amazon &amp; Flipkart</div>
+  </footer>
 </div>
 
 <script>
 (function () {
   var params = new URLSearchParams(location.search);
   var id = params.get('id');
-  var card = document.getElementById('card');
-
-  function fail(msg) {
-    card.innerHTML = '<h1>Price History</h1><p class="err">' + msg + '</p>';
-  }
-
-  if (!id) { fail('No product id was provided. Open this page from the Telegram “Price Track” button.'); return; }
 
   function money(n, cur) {
+    if (n == null) return '—';
     var sym = cur === 'INR' ? '\u20B9' : '';
     return sym + Number(n).toLocaleString('en-IN');
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function show(el) { el.classList.remove('hidden'); }
+  function hide(el) { el.classList.add('hidden'); }
+
+  // ---- search box: derive our product id from a pasted link ----
+  function idFromLink(link) {
+    var raw = String(link || '').trim();
+    if (!raw) return null;
+    if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+    var u;
+    try { u = new URL(raw); } catch (e) { return null; }
+    var host = u.hostname.toLowerCase();
+    if (host.indexOf('amazon') !== -1) {
+      var m = u.href.match(/\/(?:dp|gp\/product|gp\/aw\/d|d|product|ASIN)\/([A-Z0-9]{10})/i) ||
+              u.href.match(/[?&](?:asin|ASIN)=([A-Z0-9]{10})/);
+      return m ? 'amazon_' + m[1].toUpperCase() : null;
+    }
+    if (host.indexOf('flipkart') !== -1) {
+      var pid = u.searchParams.get('pid');
+      var m2 = u.pathname.match(/\/p\/(itm[a-z0-9]{6,})/i);
+      var got = pid || (m2 ? m2[1] : null);
+      return got ? 'flipkart_' + got : null;
+    }
+    return null;
+  }
+
+  document.getElementById('goBtn').addEventListener('click', function () {
+    var msg = document.getElementById('searchMsg');
+    var got = idFromLink(document.getElementById('linkInput').value);
+    if (!got) {
+      msg.textContent = 'That does not look like an Amazon or Flipkart product link.';
+      show(msg);
+      return;
+    }
+    location.search = '?id=' + encodeURIComponent(got);
+  });
+  document.getElementById('linkInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('goBtn').click();
+  });
+
+  if (!id) {
+    hide(document.getElementById('loading'));
+    var er = document.getElementById('error');
+    er.innerHTML = 'Paste a product link above, or open this page from the bot\u2019s \u201cPrice History\u201d button.';
+    show(er);
+    return;
   }
 
   fetch('/api/track?id=' + encodeURIComponent(id))
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      if (!data.ok) { fail('Could not load this product (' + (data.error || 'unknown') + ').'); return; }
+      hide(document.getElementById('loading'));
+      if (!data.ok) {
+        var e2 = document.getElementById('error');
+        e2.innerHTML = 'No price history for this product yet.<br><br>Send the link to the bot on Telegram first, and I will start tracking it.';
+        show(e2);
+        return;
+      }
       render(data);
     })
-    .catch(function () { fail('Network error while loading price history.'); });
+    .catch(function () {
+      hide(document.getElementById('loading'));
+      var e3 = document.getElementById('error');
+      e3.textContent = 'Network error while loading price history.';
+      show(e3);
+    });
 
   function render(data) {
-    var p = data.product;
-    var hist = data.history || [];
-    var title = p.title || p.productId;
+    var p = data.product || {};
+    var hist = (data.history || []).filter(function (h) { return h.price != null; });
+    var cur = p.currency || 'INR';
     var last = p.lastPrice != null ? p.lastPrice : (hist.length ? hist[hist.length - 1].price : null);
-    var first = hist.length ? hist[0].price : null;
-    var min = hist.length ? Math.min.apply(null, hist.map(function (h) { return h.price; })) : null;
-    var max = hist.length ? Math.max.apply(null, hist.map(function (h) { return h.price; })) : null;
+    var prices = hist.map(function (h) { return h.price; });
+    var low = prices.length ? Math.min.apply(null, prices) : null;
+    var high = prices.length ? Math.max.apply(null, prices) : null;
 
-    var deltaHtml = '';
-    if (first != null && last != null && first !== last) {
-      var diff = last - first;
-      var pct = (diff / first) * 100;
-      var cls = diff < 0 ? 'down' : 'up';
-      var sign = diff < 0 ? '' : '+';
-      deltaHtml = '<div class="delta ' + cls + '">' + sign + money(Math.abs(diff), p.currency) +
-                  ' (' + sign + pct.toFixed(1) + '%) vs 30 days ago</div>';
-    }
+    show(document.getElementById('result'));
 
-    var marketLabel = p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : p.marketplace);
+    if (p.imageUrl) { var im = document.getElementById('pImg'); im.src = p.imageUrl; show(im); }
+    document.getElementById('pMarket').textContent = p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : (p.marketplace || 'Product'));
+    document.getElementById('pTitle').textContent = p.title || p.productId || id;
+    document.getElementById('pMeta').textContent = (p.productId || '');
+    document.getElementById('pPrice').textContent = money(last, cur);
+    document.getElementById('sLow').textContent = money(low, cur);
+    document.getElementById('sHigh').textContent = money(high, cur);
+    document.getElementById('sPts').textContent = String(hist.length);
+    document.getElementById('iStore').textContent = p.marketplace || '—';
+    document.getElementById('iId').textContent = p.productId || '—';
+    document.getElementById('iCur').textContent = cur;
+
     var buy = p.affiliateUrl || p.cleanUrl || '#';
+    document.getElementById('buyBtn').href = buy;
+    document.getElementById('visitBtn').href = p.cleanUrl || buy;
+    document.getElementById('buyBtn').textContent = 'Buy in ' + (p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : 'store'));
+    document.getElementById('visitBtn').textContent = 'Visit store';
 
-    card.innerHTML =
-      '<h1>' + escapeHtml(title) + '</h1>' +
-      '<div class="muted">' + escapeHtml(marketLabel) + ' • ' + escapeHtml(p.productId) + '</div>' +
-      '<div class="price">' + (last != null ? money(last, p.currency) : '—') + '</div>' +
-      deltaHtml +
-      '<div class="chart-box"><canvas id="chart"></canvas></div>' +
-      '<div class="row">' +
-        '<div class="stat"><div class="k">Lowest (30d)</div><div class="v">' + (min != null ? money(min, p.currency) : '—') + '</div></div>' +
-        '<div class="stat"><div class="k">Highest (30d)</div><div class="v">' + (max != null ? money(max, p.currency) : '—') + '</div></div>' +
-        '<div class="stat"><div class="k">Data points</div><div class="v">' + hist.length + '</div></div>' +
-      '</div>' +
-      '<a class="cta" href="' + escapeAttr(buy) + '" target="_blank" rel="noopener">Buy now →</a>';
-
-    if (!hist.length) {
-      document.querySelector('.chart-box').innerHTML = '<div class="center muted">No price points recorded yet. Check back after the next scheduled run.</div>';
-      return;
+    // ---- "Is it a right time to buy?" verdict ----
+    var v = document.getElementById('verdict');
+    if (hist.length < 2 || low == null || high == null) {
+      v.className = 'verdict mid';
+      v.innerHTML = '<b>Not enough data yet</b>Keep tracking \u2014 a verdict appears once a few price points are recorded.';
+    } else if (last <= low * 1.02) {
+      v.className = 'verdict good';
+      v.innerHTML = '<b>Good time to buy</b>The current price is at or near its lowest in the last 30 days.';
+    } else if (last >= high * 0.98) {
+      v.className = 'verdict bad';
+      v.innerHTML = '<b>It\u2019s better to wait</b>The current price is at its peak. It\u2019s better to wait for a price drop.';
+    } else {
+      var pctAboveLow = low ? Math.round(((last - low) / low) * 100) : 0;
+      v.className = 'verdict mid';
+      v.innerHTML = '<b>Around the middle</b>It is about ' + pctAboveLow + '% above the 30-day low. Consider waiting for a drop.';
     }
+    show(v);
 
+    // ---- graph ----
+    if (!hist.length) { hide(document.querySelector('.chart-box')); show(document.getElementById('chartEmpty')); return; }
     var labels = hist.map(function (h) {
       if (!h.t) return '';
-      var d = new Date(h.t);
-      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      return new Date(h.t).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
     });
-    var values = hist.map(function (h) { return h.price; });
-
     new Chart(document.getElementById('chart'), {
       type: 'line',
       data: {
         labels: labels,
         datasets: [{
-          label: 'Price',
-          data: values,
-          borderColor: '#4f9cf9',
-          backgroundColor: 'rgba(79,156,249,0.15)',
-          borderWidth: 2,
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          pointHoverRadius: 5
+          label: 'Price', data: prices,
+          borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.15)',
+          borderWidth: 2, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5
         }]
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { grid: { color: '#20242e' }, ticks: { color: '#9aa4b2', maxTicksLimit: 8 } },
-          y: { grid: { color: '#20242e' }, ticks: { color: '#9aa4b2', callback: function (v) { return money(v, p.currency); } } }
+          x: { grid: { color: '#20242e' }, ticks: { color: '#98a2b3', maxTicksLimit: 8 } },
+          y: { grid: { color: '#20242e' }, ticks: { color: '#98a2b3', callback: function (val) { return money(val, cur); } } }
         }
       }
     });
-  }
-
-  function escapeHtml(s) {
-    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-  function escapeAttr(s) {
-    return String(s == null ? '#' : s).replace(/"/g, '%22').replace(/</g, '%3C').replace(/>/g, '%3E');
   }
 })();
 </script>

@@ -493,6 +493,66 @@ function registerHandlers(bot) {
     }
   });
 
+  // Self-diagnosis: reports which credentials are present and what Firestore
+  // actually says, so a config problem can be read straight from the chat.
+  bot.command('diag', async (ctx) => {
+    const lines = ['🩺 <b>Diagnostics</b>', ''];
+    try {
+      lines.push('BOT_TOKEN: ' + (process.env.BOT_TOKEN ? 'set' : 'MISSING'));
+      lines.push('FIREBASE_SERVICE_ACCOUNT_KEY: ' + (process.env.FIREBASE_SERVICE_ACCOUNT_KEY ? 'set' : 'not set'));
+      lines.push(
+        'three-part credentials: ' +
+          (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY
+            ? 'set'
+            : 'not set')
+      );
+      lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));
+      if (fbError) lines.push('firebase load error: <code>' + escapeHtml(String(fbError).slice(0, 220)) + '</code>');
+
+      if (fb && typeof fb.loadServiceAccount === 'function') {
+        try {
+          const sa = fb.loadServiceAccount();
+          lines.push('project_id: <code>' + escapeHtml(sa.project_id || '(none)') + '</code>');
+          lines.push('client_email: <code>' + escapeHtml(sa.client_email || '(none)') + '</code>');
+          const pk = String(sa.private_key || '');
+          lines.push('private_key length: ' + pk.length);
+          lines.push('private_key header: <code>' + escapeHtml(pk.split('\n')[0]) + '</code>');
+        } catch (err) {
+          lines.push('credential error: <code>' + escapeHtml(String(err.message).slice(0, 220)) + '</code>');
+        }
+      }
+
+      if (db) {
+        try {
+          await db.collection(COLLECTIONS.PRODUCTS).limit(1).get();
+          lines.push('firestore read: OK');
+        } catch (err) {
+          lines.push(
+            'firestore read FAILED: <code>' +
+              escapeHtml(String(err.code || '') + ' ' + String(err.message || err).slice(0, 300)) +
+              '</code>'
+          );
+        }
+
+        try {
+          const ref = db.collection('_diag').doc('ping');
+          await ref.set({ at: Date.now() });
+          await ref.delete();
+          lines.push('firestore write: OK');
+        } catch (err) {
+          lines.push(
+            'firestore write FAILED: <code>' +
+              escapeHtml(String(err.code || '') + ' ' + String(err.message || err).slice(0, 300)) +
+              '</code>'
+          );
+        }
+      }
+    } catch (err) {
+      lines.push('diagnostic failed: <code>' + escapeHtml(String(err.message).slice(0, 220)) + '</code>');
+    }
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+  });
+
   bot.command(['mytracks', 'list'], sendTrackingList);
 
   bot.command('untrack', async (ctx) => {

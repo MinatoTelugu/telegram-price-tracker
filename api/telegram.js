@@ -371,12 +371,30 @@ async function readUpdate(req) {
   });
 }
 
+/**
+ * Classify the Firebase init failure WITHOUT echoing any credential bytes.
+ * The env var may be a web config (no private_key), malformed JSON, etc.
+ */
+function firebaseReason() {
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) return 'env_missing';
+  if (!fbError) return null;
+  const m = String(fbError);
+  if (/could not be parsed/i.test(m)) return 'invalid_json';
+  if (/private_key/i.test(m)) return 'missing_private_key';
+  if (/client_email/i.test(m)) return 'missing_client_email';
+  if (/project_id/i.test(m)) return 'missing_project_id';
+  return 'init_failed';
+}
+
 /** Human-readable setup problems, safe to expose publicly (no secrets). */
 function configProblems() {
   const problems = [];
   if (!process.env.BOT_TOKEN) problems.push('BOT_TOKEN is not set');
-  if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) problems.push('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
-  else if (fbError) problems.push('Firebase failed to initialise (check FIREBASE_SERVICE_ACCOUNT_KEY)');
+  const fr = firebaseReason();
+  if (fr === 'env_missing') problems.push('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
+  else if (fr === 'invalid_json') problems.push('FIREBASE_SERVICE_ACCOUNT_KEY is not valid JSON — paste the whole service-account file as a single line');
+  else if (fr === 'missing_private_key') problems.push('FIREBASE_SERVICE_ACCOUNT_KEY looks like a WEB config, not a service-account key — it has no private_key');
+  else if (fr) problems.push('Firebase failed to initialise (check FIREBASE_SERVICE_ACCOUNT_KEY)');
   if (!process.env.WEB_APP_URL) problems.push('WEB_APP_URL is not set (Price Track button will be hidden)');
   return problems;
 }
@@ -392,6 +410,7 @@ async function buildDiagnostic(req) {
       webAppUrl: Boolean(process.env.WEB_APP_URL),
       cronSecret: Boolean(process.env.CRON_SECRET),
     },
+    firebaseReason: firebaseReason(),
     problems: configProblems(),
   };
 

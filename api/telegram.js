@@ -70,9 +70,83 @@ function productDocId(result) {
   return result.marketplace + '_' + result.productId;
 }
 
-/** Short, lowercase per-product token used in the /stop_<token> command. */
+/** Short, uppercase-looking per-product token used in the /stop_<token> command. */
 function stopTokenFor(docId) {
-  return crypto.createHash('sha1').update(String(docId)).digest('hex').slice(0, 10);
+  const h = crypto.createHash('sha1').update(String(docId)).digest('hex');
+  const n = BigInt('0x' + h.slice(0, 15));
+  return n.toString(36).padStart(12, '0').slice(0, 12);
+}
+
+const LIST_DIVIDER = '_______________________________________';
+
+/**
+ * Build and send the tracking list. Shows BOTH products being tracked and
+ * products the user has stopped, in the reference layout:
+ *
+ *   1. <b>Full product name</b>
+ *
+ *   Click here to view in Flipkart!
+ *
+ *   [ View Price History! ]
+ *
+ *   Click /stop_<TOKEN> to stop this product.
+ *   _______________________________________
+ */
+async function sendTrackingList(ctx) {
+  try {
+    if (!ctx.from) return;
+    if (!db) {
+      await ctx.reply(DB_DOWN);
+      return;
+    }
+    const uid = String(ctx.from.id);
+
+    const [activeSnap, stoppedSnap] = await Promise.all([
+      db.collection(COLLECTIONS.PRODUCTS).where('subscribers', 'array-contains', uid).limit(30).get(),
+      db.collection(COLLECTIONS.PRODUCTS).where('stoppedBy', 'array-contains', uid).limit(30).get(),
+    ]);
+
+    const seen = new Set();
+    const items = [];
+    activeSnap.docs.forEach((d) => { seen.add(d.id); items.push({ doc: d, active: true }); });
+    stoppedSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); items.push({ doc: d, active: false }); } });
+
+    if (!items.length) {
+      await ctx.reply('You are not tracking anything yet. Send an Amazon or Flipkart link to start.');
+      return;
+    }
+
+    const lines = [];
+    items.forEach((it, i) => {
+      const d = it.doc.data();
+      const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
+      const title = d.title || d.productId || it.doc.id;
+      const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
+      const buy = d.affiliateUrl || d.cleanUrl;
+      const hist = process.env.WEB_APP_URL
+        ? process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(it.doc.id)
+        : null;
+
+      lines.push(i + 1 + '. <b>' + escapeHtml(title) + '</b>');
+      lines.push('');
+      if (buy) lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+      lines.push('');
+      if (hist) lines.push('<a href="' + escapeHtml(hist) + '">[ View Price History! ]</a>');
+      lines.push('');
+      if (it.active) {
+        lines.push('Click /stop_' + token + ' to stop this product.');
+      } else {
+        lines.push('🔴 You stopped tracking this. Send the link again to resume.');
+      }
+      lines.push(LIST_DIVIDER);
+    });
+    lines.push('');
+    lines.push('🦋 <b>Total Products: ' + items.length + '</b>');
+
+    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
+  } catch (err) {
+    console.error('sendTrackingList failed', err);
+  }
 }
 
 /**
@@ -124,6 +198,7 @@ async function trackProduct(result, from) {
     affiliateUrl: result.affiliateUrl,
     stopToken: stopTokenFor(docId),
     subscribers: admin.firestore.FieldValue.arrayUnion(String(from.id)),
+    stoppedBy: admin.firestore.FieldValue.arrayRemove(String(from.id)),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     active: true,
   };
@@ -141,12 +216,13 @@ async function trackProduct(result, from) {
   return docId;
 }
 
-/** Unsubscribe a user from a product. */
+/** Unsubscribe a user from a product (and remember that they stopped it). */
 async function untrackProduct(docId, from) {
   const ref = db.collection(COLLECTIONS.PRODUCTS).doc(docId);
   await ref.set(
     {
       subscribers: admin.firestore.FieldValue.arrayRemove(String(from.id)),
+      stoppedBy: admin.firestore.FieldValue.arrayUnion(String(from.id)),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -233,7 +309,10 @@ function registerHandlers(bot) {
       '/mytracks – your tracked products\n' +
       '/untrack &lt;id&gt; – stop tracking one\n' +
       '/help – how it works';
-    const keyboard = Markup.inlineKeyboard([[Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)]]);
+    const keyboard = Markup.inlineKeyboard([
+      [Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)],
+      [Markup.button.callback('📋 My List', 'mylist')],
+    ]);
 
     // Reply FIRST so the welcome is instant; the DB write happens after it.
     try {
@@ -284,50 +363,7 @@ function registerHandlers(bot) {
     }
   });
 
-  bot.command(['mytracks', 'list'], async (ctx) => {
-    try {
-      if (!ctx.from) return;
-      if (!db) {
-        await ctx.reply(DB_DOWN);
-        return;
-      }
-      const snap = await db
-        .collection(COLLECTIONS.PRODUCTS)
-        .where('subscribers', 'array-contains', String(ctx.from.id))
-        .limit(20)
-        .get();
-
-      if (snap.empty) {
-        await ctx.reply('You are not tracking anything yet. Send an Amazon or Flipkart link to start.');
-        return;
-      }
-
-      const lines = ['📋 <b>Tracking List</b>', ''];
-      snap.docs.forEach((doc, i) => {
-        const d = doc.data();
-        const token = d.stopToken || stopTokenFor(doc.id);
-        const title = d.title || d.productId || doc.id;
-        const market =
-          d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
-        const buy = d.affiliateUrl || d.cleanUrl;
-
-        lines.push(i + 1 + '. <b>' + escapeHtml(title) + '</b>');
-        if (buy) {
-          lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
-        }
-        if (process.env.WEB_APP_URL) {
-          const hist = process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(doc.id);
-          lines.push('<a href="' + escapeHtml(hist) + '">View Price History</a>');
-        }
-        lines.push('Click /stop_' + token + ' to stop this product.');
-        lines.push('');
-      });
-      lines.push('🦋 <b>Total Products: ' + snap.size + '</b>');
-      await ctx.reply(lines.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
-    } catch (err) {
-      console.error('mytracks handler failed', err);
-    }
-  });
+  bot.command(['mytracks', 'list'], sendTrackingList);
 
   bot.command('untrack', async (ctx) => {
     try {
@@ -460,6 +496,16 @@ function registerHandlers(bot) {
       if (ctx.answerCbQuery) await ctx.answerCbQuery('Stopped tracking').catch(() => {});
     } catch (err) {
       console.error('action handler failed', err);
+    }
+  });
+
+  // "📋 My List" button on the welcome message.
+  bot.action('mylist', async (ctx) => {
+    try {
+      if (ctx.answerCbQuery) await ctx.answerCbQuery().catch(() => {});
+      await sendTrackingList(ctx);
+    } catch (err) {
+      console.error('mylist action failed', err);
     }
   });
 

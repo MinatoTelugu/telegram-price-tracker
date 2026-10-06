@@ -31,6 +31,7 @@ const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const { convertAffiliateLink } = require('../lib/affiliate');
+const { fetchProduct } = require('../lib/scraper');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -186,10 +187,11 @@ async function upsertUser(from) {
  * Price fields are left null here; the cron job fills them on its first run.
  * One product doc per marketplace+productId, so price history is shared.
  */
-async function trackProduct(result, from) {
+async function trackProduct(result, from, info) {
   const docId = productDocId(result);
   const ref = db.collection(COLLECTIONS.PRODUCTS).doc(docId);
   const snap = await ref.get();
+  const extra = info || {};
 
   const data = {
     marketplace: result.marketplace,
@@ -203,16 +205,38 @@ async function trackProduct(result, from) {
     active: true,
   };
 
+  if (extra.title) data.title = extra.title;
+  if (extra.imageUrl) data.imageUrl = extra.imageUrl;
+  if (extra.price != null) {
+    data.lastPrice = extra.price;
+    data.currency = extra.currency || 'INR';
+    data.lastCheckedAt = admin.firestore.FieldValue.serverTimestamp();
+  }
+
   if (!snap.exists) {
     data.createdAt = admin.firestore.FieldValue.serverTimestamp();
-    data.title = null;
-    data.imageUrl = null;
-    data.currency = 'INR';
-    data.lastPrice = null;
-    data.lastCheckedAt = null;
+    if (data.title === undefined) data.title = null;
+    if (data.imageUrl === undefined) data.imageUrl = null;
+    if (data.lastPrice === undefined) data.lastPrice = null;
+    if (data.currency === undefined) data.currency = 'INR';
+    if (data.lastCheckedAt === undefined) data.lastCheckedAt = null;
   }
 
   await ref.set(data, { merge: true });
+
+  // Seed the first price point so the graph isn't empty straight away.
+  if (extra.price != null && typeof ref.collection === 'function') {
+    try {
+      await ref.collection(COLLECTIONS.PRICE_HISTORY).add({
+        price: extra.price,
+        currency: extra.currency || 'INR',
+        checkedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    } catch (err) {
+      console.warn('history seed failed:', err.message);
+    }
+  }
+
   return docId;
 }
 
@@ -273,13 +297,34 @@ function tagWarningHidden() {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
-function formatTrackedProduct(result, docId) {
+/** "06 Oct 2026, 14:37" in IST. */
+function formatStamp(date) {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const d = new Date(date.getTime() + 5.5 * 60 * 60 * 1000); // IST
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    pad(d.getUTCDate()) + ' ' + months[d.getUTCMonth()] + ' ' + d.getUTCFullYear() +
+    ', ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes())
+  );
+}
+
+/** The "link sent" confirmation, matching the reference layout. */
+function formatTrackingConfirmation(result, info) {
+  const market = result.marketplace === 'amazon' ? 'Amazon' : 'Flipkart';
+  const link = result.cleanUrl || result.affiliateUrl;
   const lines = [
-    'Take a look at this product...',
-    "😉 I've started tracking this product. Now, you can sit back and relax! I will send you an alert when the price of this product drops!!",
+    '<a href="' + escapeHtml(link) + '">' + escapeHtml(link) + '</a>',
     '',
-    'Click /list to see all the products I am tracking for you 😃',
+    '<b>The Product has Started Tracking!</b>',
+    '',
+    '☀️ <b>' + escapeHtml(info.title || result.productId) + '</b>',
   ];
+  if (info.price != null) {
+    const sym = (info.currency || 'INR') === 'INR' ? '₹' : '';
+    lines.push('', 'Current Price: <b>' + sym + Number(info.price).toLocaleString('en-IN') + '</b>');
+  }
+  lines.push('', '<a href="' + escapeHtml(result.affiliateUrl || link) + '">Click here to open in ' + market + '!</a>');
+  lines.push('', '⏱️ Updated at [ ' + formatStamp(new Date()) + ' ]');
   if (!result.hasAffiliateTag && !tagWarningHidden()) {
     lines.push('', '⚠️ No affiliate tag configured yet — the link is clean but not monetised.');
   }
@@ -459,11 +504,40 @@ function registerHandlers(bot) {
       }
 
       await upsertUser(ctx.from);
-      const docId = await trackProduct(result, ctx.from);
 
-      await ctx.reply(formatTrackedProduct(result, docId), {
-        ...buildTrackKeyboard(docId, result),
-      });
+      // Fetch the title/price now so the confirmation matches the reference.
+      let info = { title: null, price: null, currency: 'INR', imageUrl: null };
+      try {
+        const scraped = await withTimeout(
+          fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
+          8000
+        );
+        if (scraped && scraped.ok) {
+          info = {
+            title: scraped.title || null,
+            price: scraped.price,
+            currency: scraped.currency || 'INR',
+            imageUrl: scraped.imageUrl || null,
+          };
+        }
+      } catch (err) {
+        console.warn('track-time scrape failed:', err.message);
+      }
+
+      const docId = await trackProduct(result, ctx.from, info);
+
+      const replyText = formatTrackingConfirmation(result, info);
+      const extra = { parse_mode: 'HTML', ...buildTrackKeyboard(docId, result) };
+      let sent = false;
+      if (info.imageUrl && typeof ctx.replyWithPhoto === 'function') {
+        try {
+          await withTimeout(ctx.replyWithPhoto(info.imageUrl, { caption: replyText, ...extra }), 7000);
+          sent = true;
+        } catch (err) {
+          console.warn('product photo failed, falling back to text:', err.message);
+        }
+      }
+      if (!sent) await ctx.reply(replyText, extra);
     } catch (err) {
       console.error('text handler failed', err);
       // Turn the raw Firestore error into something actionable for the user.
@@ -736,7 +810,7 @@ module.exports._internals = {
   trackProduct,
   untrackProduct,
   buildTrackKeyboard,
-  formatTrackedProduct,
+  formatTrackingConfirmation,
   registerHandlers,
   getBot,
   parseBody,

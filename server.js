@@ -50,11 +50,9 @@ if (!hasFirebase) {
   );
 }
 
-// ---- bot (long polling) ---------------------------------------------------
-const bot = new Telegraf(token);
-telegramFn._internals.registerHandlers(bot);
-
 // ---- health endpoint ------------------------------------------------------
+// Started immediately so the platform's health check passes while the bot is
+// still connecting — otherwise the platform may kill the instance mid-startup.
 const port = process.env.PORT || 8080;
 http
   .createServer((req, res) => {
@@ -97,8 +95,19 @@ async function runJob(name) {
   console.log(name + ' ->', r.statusCode, String(r.body).slice(0, 300));
 }
 
-// ---- start ----------------------------------------------------------------
-(async () => {
+// ---- bot (long polling) ---------------------------------------------------
+let bot = null;
+
+/**
+ * Start polling, retrying instead of crashing. A 409 means another copy of the
+ * bot is polling with the same token (e.g. the platform runs two instances, or
+ * the bot is also live on Vercel) — we log it clearly and try again rather than
+ * dying and triggering a restart loop.
+ */
+async function startPolling() {
+  bot = new Telegraf(token);
+  telegramFn._internals.registerHandlers(bot);
+
   try {
     // Polling cannot work while a webhook is registered, so clear it first.
     await bot.telegram.deleteWebhook({ drop_pending_updates: false });
@@ -106,8 +115,31 @@ async function runJob(name) {
     console.warn('deleteWebhook failed (continuing):', err.message);
   }
 
-  await bot.launch();
-  console.log('Bot started in long-polling mode.');
+  try {
+    await bot.launch();
+    console.log('Bot started in long-polling mode.');
+    return;
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    if (/409|Conflict/i.test(msg)) {
+      console.error(
+        'Polling conflict: ANOTHER copy of this bot is polling with the same token. ' +
+          'Run exactly ONE instance of this service, and make sure the bot is not also ' +
+          'running on Vercel. Retrying in 30 seconds...'
+      );
+    } else {
+      console.error('Polling failed:', msg);
+      console.error('Retrying in 30 seconds...');
+    }
+    setTimeout(() => {
+      startPolling().catch((e) => console.error('retry failed:', e.message));
+    }, 30000);
+  }
+}
+
+// ---- start ----------------------------------------------------------------
+(async () => {
+  await startPolling();
 
   const priceCron = process.env.PRICE_CRON || '0 */6 * * *';
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
@@ -123,21 +155,20 @@ async function runJob(name) {
   console.log('Scheduled: price checks "' + priceCron + '", deals "' + dealsCron + '"');
 })();
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, stopping.');
+function shutdown(signal) {
+  console.log(signal + ' received, stopping.');
   try {
-    bot.stop('SIGTERM');
+    if (bot) bot.stop(signal);
   } catch (err) {
     /* ignore */
   }
   process.exit(0);
-});
+}
 
-process.on('SIGINT', () => {
-  try {
-    bot.stop('SIGINT');
-  } catch (err) {
-    /* ignore */
-  }
-  process.exit(0);
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Never die from an unhandled rejection — log it and keep running.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection (continuing):', (err && err.message) || err);
 });

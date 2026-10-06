@@ -303,8 +303,18 @@ function registerHandlers(bot) {
       });
     } catch (err) {
       console.error('text handler failed', err);
+      // Turn the raw Firestore error into something actionable for the user.
+      const msg = String((err && err.message) || err);
+      let hint = 'Something went wrong while processing that link. Please try again.';
+      if (/does not exist|NOT_FOUND/i.test(msg)) {
+        hint = '⚠️ My database does not exist yet. Create a Firestore database in the Firebase console, then try again.';
+      } else if (/PERMISSION_DENIED|permission/i.test(msg)) {
+        hint = '⚠️ I do not have permission to write to the database (check the service account).';
+      } else if (/UNAUTHENTICATED|credential|invalid_grant/i.test(msg)) {
+        hint = '⚠️ My database credentials were rejected. Please try again later.';
+      }
       try {
-        await ctx.reply('Something went wrong while processing that link. Please try again.');
+        await ctx.reply(hint);
       } catch (_) {
         /* reply already failed; nothing else to do */
       }
@@ -422,6 +432,19 @@ async function buildDiagnostic(req) {
     firebaseReason: firebaseReason(),
     problems: configProblems(),
   };
+
+  // Read-only Firestore reachability check — proves the database exists and the
+  // credentials can read it, without writing anything.
+  if (db) {
+    try {
+      await db.collection(COLLECTIONS.PRODUCTS).limit(1).get();
+      diag.firestore = { ok: true };
+    } catch (err) {
+      diag.firestore = { ok: false, code: err.code || null, message: String(err.message || err).slice(0, 200) };
+    }
+  } else {
+    diag.firestore = { ok: false, message: 'db not initialised' };
+  }
 
   // Deeper check, gated by CRON_SECRET so we don't leak anything publicly.
   const key = (req.query && (req.query.key || req.query.secret)) || '';

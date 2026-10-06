@@ -23,15 +23,28 @@
  */
 
 const axios = require('axios');
-const { db, admin, COLLECTIONS } = require('../lib/firebase');
 const { fetchProduct } = require('../lib/scraper');
+
+// Load Firebase defensively: missing credentials must not crash the process
+// (on Koyeb a throw here would kill the whole app at startup).
+let fb = null;
+let fbError = null;
+try {
+  fb = require('../lib/firebase');
+} catch (err) {
+  fbError = err.message;
+  console.error('Firebase failed to initialise at load time:', err.message);
+}
+const db = fb && fb.db;
+const admin = fb && fb.admin;
+const COLLECTIONS = (fb && fb.COLLECTIONS) || { PRODUCTS: 'products', PRICE_HISTORY: 'price_history' };
 
 const BATCH_SIZE = parseInt(process.env.CRON_BATCH_SIZE || '20', 10);
 const DROP_THRESHOLD = parseFloat(process.env.PRICE_DROP_THRESHOLD_PERCENT || '1');
 const HISTORY_DAYS = 30;
 const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
 
-const FieldValue = admin.firestore.FieldValue;
+const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
 async function sendTelegramMessage(chatId, text) {
   const token = process.env.BOT_TOKEN;
@@ -211,6 +224,13 @@ module.exports = async (req, res) => {
       res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
       return;
     }
+  }
+
+  if (!db) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: false, error: 'Firebase is not configured', detail: fbError }));
+    return;
   }
 
   try {

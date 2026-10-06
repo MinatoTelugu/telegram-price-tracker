@@ -25,16 +25,28 @@
  */
 
 const axios = require('axios');
-const { db, admin, COLLECTIONS } = require('../lib/firebase');
 const { discoverDeals } = require('../lib/deals');
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { shortenUrl } = require('../lib/shorten');
+
+// Load Firebase defensively: missing credentials must not crash the process.
+let fb = null;
+let fbError = null;
+try {
+  fb = require('../lib/firebase');
+} catch (err) {
+  fbError = err.message;
+  console.error('Firebase failed to initialise at load time:', err.message);
+}
+const db = fb && fb.db;
+const admin = fb && fb.admin;
+const COLLECTIONS = (fb && fb.COLLECTIONS) || { DEALS_POSTED: 'deals_posted' };
 
 const CHANNEL_ID = process.env.DEALS_CHANNEL_ID || '-1004386388150';
 const MIN_DISCOUNT = parseFloat(process.env.DEALS_MIN_DISCOUNT || '50');
 const MAX_PER_RUN = parseInt(process.env.DEALS_MAX_PER_RUN || '5', 10);
 const REPOST_DAYS = parseInt(process.env.DEALS_REPOST_DAYS || '30', 10);
-const FieldValue = admin.firestore.FieldValue;
+const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
 function escapeHtml(value = '') {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -133,6 +145,13 @@ module.exports = async (req, res) => {
   }
 
   const dryRun = Boolean(req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true'));
+
+  if (!db) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: false, error: 'Firebase is not configured', detail: fbError }));
+    return;
+  }
 
   try {
     const deals = await discoverDeals({ minDiscount: MIN_DISCOUNT, limit: MAX_PER_RUN * 4 });

@@ -28,14 +28,26 @@ const http = require('http');
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 
+// api/telegram.js loads Firebase defensively, so requiring it can never crash
+// the process. The two JOB modules are loaded lazily below for the same reason.
 const telegramFn = require('./api/telegram');
-const cronFn = require('./api/cron');
-const dealsFn = require('./api/deals');
 
 const token = process.env.BOT_TOKEN;
 if (!token) {
   console.error('BOT_TOKEN is required.');
   process.exit(1);
+}
+
+// Tell the operator clearly what is missing, instead of dying silently.
+const hasFirebase =
+  Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY) ||
+  Boolean(process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY);
+if (!hasFirebase) {
+  console.error(
+    'WARNING: Firebase credentials are not set. The bot will still start and reply, ' +
+      'but tracking, price checks and deals will not work until you add ' +
+      'FIREBASE_SERVICE_ACCOUNT_KEY (or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY).'
+  );
 }
 
 // ---- bot (long polling) ---------------------------------------------------
@@ -51,7 +63,18 @@ http
   })
   .listen(port, () => console.log('Health server listening on port ' + port));
 
-// ---- run a serverless handler as a normal function ------------------------
+// ---- helpers --------------------------------------------------------------
+/** Load a job module lazily so a bad config can't crash the whole process. */
+function loadJob(name) {
+  try {
+    return require(name === 'deals' ? './api/deals' : './api/cron');
+  } catch (err) {
+    console.error('Could not load the ' + name + ' job:', err.message);
+    return null;
+  }
+}
+
+/** Run a serverless handler as a normal function. */
 function callHandler(handler, headers) {
   return new Promise((resolve) => {
     const res = {
@@ -65,6 +88,13 @@ function callHandler(handler, headers) {
       (err) => resolve({ statusCode: 500, body: String((err && err.message) || err) })
     );
   });
+}
+
+async function runJob(name) {
+  const handler = loadJob(name);
+  if (!handler) return;
+  const r = await callHandler(handler, { host: 'localhost' });
+  console.log(name + ' ->', r.statusCode, String(r.body).slice(0, 300));
 }
 
 // ---- start ----------------------------------------------------------------
@@ -82,14 +112,12 @@ function callHandler(handler, headers) {
   const priceCron = process.env.PRICE_CRON || '0 */6 * * *';
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
 
-  cron.schedule(priceCron, async () => {
-    const r = await callHandler(cronFn, { host: 'localhost' });
-    console.log('price check ->', r.statusCode, String(r.body).slice(0, 300));
+  cron.schedule(priceCron, () => {
+    runJob('cron').catch((err) => console.error('price check failed:', err.message));
   });
 
-  cron.schedule(dealsCron, async () => {
-    const r = await callHandler(dealsFn, { host: 'localhost' });
-    console.log('deals ->', r.statusCode, String(r.body).slice(0, 300));
+  cron.schedule(dealsCron, () => {
+    runJob('deals').catch((err) => console.error('deals failed:', err.message));
   });
 
   console.log('Scheduled: price checks "' + priceCron + '", deals "' + dealsCron + '"');

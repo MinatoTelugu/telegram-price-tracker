@@ -81,7 +81,8 @@ async function pruneOldHistory(docRef) {
 
 async function processProduct(doc) {
   const data = doc.data();
-  const url = data.cleanUrl || data.affiliateUrl;
+  // fetchUrl caches the resolved canonical URL (set on a previous run).
+  const url = data.fetchUrl || data.cleanUrl || data.affiliateUrl;
   const now = new Date();
 
   const result = await fetchProduct(url, data.marketplace);
@@ -114,6 +115,8 @@ async function processProduct(doc) {
   };
   if (!data.title && result.title) update.title = result.title;
   if (!data.imageUrl && result.imageUrl) update.imageUrl = result.imageUrl;
+  // Cache the canonical URL we resolved, so future runs skip the resolution.
+  if (result.resolvedUrl && result.resolvedUrl !== data.fetchUrl) update.fetchUrl = result.resolvedUrl;
   await doc.ref.set(update, { merge: true });
 
   await pruneOldHistory(doc.ref);

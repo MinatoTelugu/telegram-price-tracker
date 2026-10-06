@@ -1,7 +1,7 @@
-name: Price check (external cron)
+name: Price check + deals (external cron)
 
-# Vercel's Hobby plan only allows daily cron jobs, so this workflow provides the
-# more frequent 6-hourly price checks for free.
+# Vercel's Hobby plan only allows daily cron jobs, so this workflow provides
+# more frequent runs for free. It hits BOTH the price-check and deals endpoints.
 #
 # Set two repository secrets (Settings -> Secrets and variables -> Actions):
 #   APP_URL      -> e.g. https://your-project.vercel.app  (no trailing slash)
@@ -18,12 +18,16 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger /api/cron
+      - name: Trigger cron endpoints
         run: |
           if [ -z "${{ secrets.APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
             echo "APP_URL or CRON_SECRET repository secret is not set."
             exit 1
           fi
-          curl -sS --fail-with-body \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.APP_URL }}/api/cron" | head -c 4000
+          for path in /api/cron /api/deals; do
+            echo "== $path =="
+            curl -sS --fail-with-body \
+              -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+              "${{ secrets.APP_URL }}$path" | head -c 2000
+            echo
+          done

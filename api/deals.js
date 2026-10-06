@@ -1,0 +1,190 @@
+/**
+ * api/deals.js
+ * ---------------------------------------------------------------------------
+ * Free Deals Auto-Poster.
+ *
+ * On each run it:
+ *   1. scrapes Flipkart listing pages for products discounted past a threshold
+ *   2. skips anything already posted recently (tracked in Firestore)
+ *   3. builds the affiliate link (Amazon tagged; Flipkart plain for now)
+ *   4. shortens it with Bitly (BITLY_ACCESS_TOKEN)
+ *   5. posts image + title + price + link to the channel
+ *
+ * Auth matches api/cron.js: Vercel sends "Authorization: Bearer $CRON_SECRET".
+ * Add ?dryRun=1 to see what it found WITHOUT posting.
+ *
+ * Env vars:
+ *   BOT_TOKEN              -> to post to the channel
+ *   DEALS_CHANNEL_ID       -> channel chat id (default -1004386388150)
+ *   BITLY_ACCESS_TOKEN     -> Bitly v4 token
+ *   DEALS_MIN_DISCOUNT     -> threshold % (default 50)
+ *   DEALS_MAX_PER_RUN      -> posts per run (default 5)
+ *   DEALS_REPOST_DAYS      -> don't repost a deal within N days (default 30)
+ *   DEALS_SOURCE_URLS      -> comma-separated listing pages to scrape
+ * ---------------------------------------------------------------------------
+ */
+
+const axios = require('axios');
+const { db, admin, COLLECTIONS } = require('../lib/firebase');
+const { discoverDeals } = require('../lib/deals');
+const { convertAffiliateLink } = require('../lib/affiliate');
+const { shortenUrl } = require('../lib/shorten');
+
+const CHANNEL_ID = process.env.DEALS_CHANNEL_ID || '-1004386388150';
+const MIN_DISCOUNT = parseFloat(process.env.DEALS_MIN_DISCOUNT || '50');
+const MAX_PER_RUN = parseInt(process.env.DEALS_MAX_PER_RUN || '5', 10);
+const REPOST_DAYS = parseInt(process.env.DEALS_REPOST_DAYS || '30', 10);
+const FieldValue = admin.firestore.FieldValue;
+
+function escapeHtml(value = '') {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function money(n) {
+  return '₹' + Number(n).toLocaleString('en-IN');
+}
+
+function buildCaption(deal, link) {
+  const lines = ['🔥 <b>' + deal.discount + '% OFF</b>', '', '<b>' + escapeHtml(deal.title) + '</b>', ''];
+  if (deal.price != null && deal.mrp != null) {
+    lines.push('💰 <b>' + money(deal.price) + '</b>  <s>' + money(deal.mrp) + '</s>');
+  } else if (deal.price != null) {
+    lines.push('💰 <b>' + money(deal.price) + '</b>');
+  }
+  lines.push('', '🔗 ' + link);
+  return lines.join('\n');
+}
+
+async function alreadyPosted(id) {
+  if (!db) return false;
+  try {
+    const snap = await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).get();
+    return snap.exists;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function markPosted(id, deal) {
+  if (!db) return;
+  try {
+    await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).set(
+      {
+        title: deal.title,
+        url: deal.url,
+        price: deal.price,
+        mrp: deal.mrp,
+        discount: deal.discount,
+        marketplace: deal.marketplace,
+        postedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('markPosted failed', id, err.message);
+  }
+}
+
+async function postToChannel(deal, link) {
+  const token = process.env.BOT_TOKEN;
+  if (!token) throw new Error('BOT_TOKEN is not set');
+
+  const caption = buildCaption(deal, link);
+
+  if (deal.imageUrl) {
+    try {
+      await axios.post(
+        'https://api.telegram.org/bot' + token + '/sendPhoto',
+        {
+          chat_id: CHANNEL_ID,
+          photo: deal.imageUrl,
+          caption,
+          parse_mode: 'HTML',
+        },
+        { timeout: 15000 }
+      );
+      return true;
+    } catch (err) {
+      console.warn('sendPhoto failed, falling back to text:', err.message);
+    }
+  }
+
+  await axios.post(
+    'https://api.telegram.org/bot' + token + '/sendMessage',
+    { chat_id: CHANNEL_ID, text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
+    { timeout: 15000 }
+  );
+  return true;
+}
+
+module.exports = async (req, res) => {
+  // Auth: same scheme as api/cron.js.
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = req.headers.authorization || '';
+    const provided = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const queryKey = (req.query && (req.query.key || req.query.secret)) || '';
+    if (provided !== secret && queryKey !== secret) {
+      res.statusCode = 401;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
+      return;
+    }
+  }
+
+  const dryRun = Boolean(req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true'));
+
+  try {
+    const deals = await discoverDeals({ minDiscount: MIN_DISCOUNT, limit: MAX_PER_RUN * 4 });
+
+    if (dryRun) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true, dryRun: true, minDiscount: MIN_DISCOUNT, found: deals.length, deals }));
+      return;
+    }
+
+    const posted = [];
+    const skipped = [];
+    for (const deal of deals) {
+      if (posted.length >= MAX_PER_RUN) break;
+
+      if (await alreadyPosted(deal.id)) {
+        skipped.push({ id: deal.id, reason: 'already_posted' });
+        continue;
+      }
+
+      const affiliate = await convertAffiliateLink(deal.url);
+      const targetUrl = affiliate.ok ? affiliate.affiliateUrl : deal.url;
+      const shortLink = (await shortenUrl(targetUrl)) || targetUrl;
+
+      try {
+        await postToChannel(deal, shortLink);
+        await markPosted(deal.id, deal);
+        posted.push({ id: deal.id, title: deal.title, discount: deal.discount, link: shortLink });
+      } catch (err) {
+        skipped.push({ id: deal.id, reason: 'post_failed', error: err.message });
+      }
+    }
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(
+      JSON.stringify({
+        ok: true,
+        minDiscount: MIN_DISCOUNT,
+        found: deals.length,
+        postedCount: posted.length,
+        posted,
+        skippedCount: skipped.length,
+        skipped,
+        bitlyConfigured: Boolean(process.env.BITLY_ACCESS_TOKEN),
+      })
+    );
+  } catch (err) {
+    console.error('deals failed', err);
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: false, error: err.message }));
+  }
+};

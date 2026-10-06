@@ -5,6 +5,10 @@
     {
       "path": "/api/cron",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/deals",
+      "schedule": "0 12 * * *"
     }
   ],
   "functions": {
@@ -12,6 +16,9 @@
       "maxDuration": 60
     },
     "api/cron.js": {
+      "maxDuration": 60
+    },
+    "api/deals.js": {
       "maxDuration": 60
     }
   }

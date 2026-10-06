@@ -109,17 +109,42 @@ async function sendTrackingList(ctx) {
 
     const seen = new Set();
     const items = [];
-    activeSnap.docs.forEach((d) => { seen.add(d.id); items.push({ doc: d, active: true }); });
-    stoppedSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); items.push({ doc: d, active: false }); } });
+    activeSnap.docs.forEach((d) => { seen.add(d.id); items.push({ doc: d, data: d.data(), active: true }); });
+    stoppedSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); items.push({ doc: d, data: d.data(), active: false }); } });
 
     if (!items.length) {
       await ctx.reply('You are not tracking anything yet. Send an Amazon or Flipkart link to start.');
       return;
     }
 
+    // Backfill any missing product titles so the list shows real names, not IDs.
+    // Bounded so the list stays quick even with many products.
+    let backfilled = 0;
+    for (const it of items) {
+      if (it.data.title || backfilled >= 3) continue;
+      const src = it.data.cleanUrl || it.data.affiliateUrl;
+      if (!src) continue;
+      try {
+        const info = await withTimeout(fetchProduct(src, it.data.marketplace), 6000);
+        if (info && info.ok && info.title) {
+          it.data.title = info.title;
+          backfilled++;
+          if (it.doc.ref) {
+            try {
+              await it.doc.ref.set({ title: info.title }, { merge: true });
+            } catch (e) {
+              /* non-fatal */
+            }
+          }
+        }
+      } catch (err) {
+        /* non-fatal — fall back to the id */
+      }
+    }
+
     const lines = [];
     items.forEach((it, i) => {
-      const d = it.doc.data();
+      const d = it.data;
       const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
       const title = d.title || d.productId || it.doc.id;
       const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;

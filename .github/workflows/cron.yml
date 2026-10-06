@@ -1,7 +1,8 @@
 name: Price check + deals (external cron)
 
 # Vercel's Hobby plan only allows daily cron jobs, so this workflow provides
-# more frequent runs for free. It hits BOTH the price-check and deals endpoints.
+# more frequent runs for free. It also REPAIRS THE WEBHOOK on every run, so a
+# mangled registration heals itself instead of silently killing the bot.
 #
 # Set two repository secrets (Settings -> Secrets and variables -> Actions):
 #   APP_URL      -> e.g. https://your-project.vercel.app  (no trailing slash)
@@ -18,12 +19,19 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger cron endpoints
+      - name: Repair webhook, then run the jobs
         run: |
           if [ -z "${{ secrets.APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
             echo "APP_URL or CRON_SECRET repository secret is not set."
             exit 1
           fi
+
+          echo "== repair webhook =="
+          curl -sS --fail-with-body \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/telegram?fixWebhook=1&key=${{ secrets.CRON_SECRET }}" | head -c 1500
+          echo
+
           for path in /api/cron /api/deals; do
             echo "== $path =="
             curl -sS --fail-with-body \

@@ -91,6 +91,12 @@ are present and whether Firebase initialised, plus a `problems` list. Add
 `?key=<CRON_SECRET>` to also see the live `getWebhookInfo` result (this is how
 you confirm the webhook URL and spot any `last_error_message`).
 
+**Webhook broken / bot not replying?** Open
+`GET /api/telegram?fixWebhook=1` — it re-registers the webhook to this
+deployment's own `/api/telegram` URL and drops pending updates, so you never
+have to paste the URL by hand (which is easy to mangle with a stray query
+string or line break).
+
 ### 7. Cron
 `vercel.json` schedules `GET /api/cron` **once a day at 03:00 UTC (08:30 IST)**
 and Vercel sends `Authorization: Bearer $CRON_SECRET`.

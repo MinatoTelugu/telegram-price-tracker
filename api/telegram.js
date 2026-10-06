@@ -497,6 +497,38 @@ async function buildDiagnostic(req) {
       diag.telegram = { error: err.message };
     }
   }
+
+  // Self-heal: ?fixWebhook=1 re-registers the webhook to THIS deployment's own
+  // /api/telegram URL, derived from the request host. This removes the manual
+  // copy-paste step that is easy to get wrong (stray query string, line break).
+  // Allowed without a key while CRON_SECRET is unset (bootstrap); once set,
+  // ?key=<CRON_SECRET> is required.
+  if (req.query && (req.query.fixWebhook === '1' || req.query.fixWebhook === 'true')) {
+    const mayFix = !process.env.CRON_SECRET || key === process.env.CRON_SECRET;
+    if (!mayFix) {
+      diag.fixWebhook = { ok: false, error: 'unauthorized' };
+    } else if (!process.env.BOT_TOKEN) {
+      diag.fixWebhook = { ok: false, error: 'BOT_TOKEN is not set' };
+    } else {
+      const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+        .split(',')[0]
+        .trim();
+      const url = 'https://' + host + '/api/telegram';
+      try {
+        const payload = { url, drop_pending_updates: true };
+        if (process.env.TELEGRAM_WEBHOOK_SECRET) payload.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET;
+        const r = await axios.post(
+          'https://api.telegram.org/bot' + process.env.BOT_TOKEN + '/setWebhook',
+          payload,
+          { timeout: 10000 }
+        );
+        diag.fixWebhook = { ok: !!(r.data && r.data.ok), set: url, telegram: r.data };
+      } catch (err) {
+        diag.fixWebhook = { ok: false, error: err.message };
+      }
+    }
+  }
+
   return diag;
 }
 

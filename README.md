@@ -15,7 +15,7 @@ Everything runs on **Vercel serverless functions** — no long-running server.
 4. A **Vercel Cron** job runs every 6 hours, fetches the current price of a
    batch of products, appends a price-history point, and messages subscribers
    when the price falls past a threshold.
-5. The inline **📈 Price Track** button opens a web page with a 30-day Chart.js
+5. The inline **📊 Price History** button opens a web page with a 30-day Chart.js
    graph of the price history.
 
 ## Project structure
@@ -75,7 +75,7 @@ npm install
 npx vercel --prod
 ```
 Note the deployment URL and set `WEB_APP_URL` to it, then redeploy so the
-"Price Track" button points at the right host.
+"Price History" button points at the right host.
 
 ### 6. Register the webhook
 Replace the placeholders and run:
@@ -120,7 +120,8 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://<your-app>.vercel.app/api/c
 | `AMAZON_AFFILIATE_TAG` | recommended | Default Amazon tag. |
 | `AMAZON_AFFILIATE_TAG_<TLD>` | no | Per-domain override, e.g. `_IN`, `_CO_UK`. |
 | `FLIPKART_AFFILIATE_ID` | recommended | Flipkart `affid`. |
-| `WEB_APP_URL` | recommended | Enables the "Price Track" button. |
+| `WEB_APP_URL` | recommended | Enables the "Price History" button. |
+| `TELEGRAM_CHANNEL_URL` | no | Where "Today's Deals" points (default `https://t.me/Ai_PriceAlert`). |
 | `TELEGRAM_WEBHOOK_SECRET` | recommended | Must match the `secret_token` you set. |
 | `CRON_SECRET` | recommended | Must match Vercel's cron secret. |
 | `CRON_BATCH_SIZE` | no | Products per run (default `20`). |

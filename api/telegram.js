@@ -131,20 +131,13 @@ async function untrackProduct(docId, from) {
   );
 }
 
-/** Deals landing page for the product's marketplace. */
-function dealsUrl(marketplace) {
-  if (marketplace === 'amazon') {
-    const tag = process.env.AMAZON_AFFILIATE_TAG || '';
-    return 'https://www.amazon.in/deals' + (tag ? '?tag=' + encodeURIComponent(tag) : '');
-  }
-  if (marketplace === 'flipkart') return 'https://www.flipkart.com/offers-store';
-  return null;
-}
+/** Telegram channel the "Today's Deals" button points at. */
+const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
 
 /**
- * Inline keyboard, arranged as a 2x2 grid to match the reference design:
- *   [ ✅ Buy Now ↗ ]  [ 🔴 Stop Tracking ]
- *   [ 📊 Price History ↗ ]  [ 🛍️ Today's Deals ↗ ]
+ * Inline keyboard, a 2x2 grid matching the reference layout:
+ *   [ ✅ Buy Now ]        [ 🔴 Stop Tracking ]
+ *   [ 📊 Price History ]  [ 🛍️ Today's Deals ]
  *
  * NOTE: Telegram inline buttons carry no styling — no colours, gradients or
  * corner radius. Only the labels and the 2x2 layout can be matched here. The
@@ -155,34 +148,28 @@ function buildTrackKeyboard(docId, result) {
   const historyUrl = process.env.WEB_APP_URL
     ? process.env.WEB_APP_URL.replace(/\/$/, '') + '/?id=' + encodeURIComponent(docId)
     : null;
-  const deals = result && dealsUrl(result.marketplace);
 
   const row1 = [];
-  if (buyUrl) row1.push(Markup.button.url('✅ Buy Now ↗', buyUrl));
+  if (buyUrl) row1.push(Markup.button.url('✅ Buy Now', buyUrl));
   row1.push(Markup.button.callback('🔴 Stop Tracking', 'untrack:' + docId));
 
   const row2 = [];
-  if (historyUrl) row2.push(Markup.button.url('📊 Price History ↗', historyUrl));
-  if (deals) row2.push(Markup.button.url("🛍️ Today's Deals ↗", deals));
+  if (historyUrl) row2.push(Markup.button.url('📊 Price History', historyUrl));
+  row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
-  const rows = [row1];
-  if (row2.length) rows.push(row2);
-  return Markup.inlineKeyboard(rows);
+  return Markup.inlineKeyboard([row1, row2]);
 }
 
 function formatTrackedProduct(result, docId) {
   const lines = [
-    '✅ <b>Link converted &amp; tracked</b>',
+    'Take a look at this product...',
+    "😉 I've started tracking this product. Now, you can sit back and relax! I will send you an alert when the price of this product drops!!",
     '',
-    MARKETPLACE_LABEL[result.marketplace] || result.marketplace,
-    '📦 <code>' + escapeHtml(result.productId) + '</code>',
-    '',
-    '🔗 <code>' + escapeHtml(result.affiliateUrl) + '</code>',
+    'Click /list to see all the products I am tracking for you 😃',
   ];
   if (!result.hasAffiliateTag) {
     lines.push('', '⚠️ No affiliate tag configured yet — the link is clean but not monetised.');
   }
-  lines.push('', 'Tracking ID: <code>' + escapeHtml(docId) + '</code>');
   return lines.join('\n');
 }
 
@@ -326,7 +313,6 @@ function registerHandlers(bot) {
       const docId = await trackProduct(result, ctx.from);
 
       await ctx.reply(formatTrackedProduct(result, docId), {
-        parse_mode: 'HTML',
         ...buildTrackKeyboard(docId, result),
       });
     } catch (err) {

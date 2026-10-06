@@ -160,6 +160,12 @@ function buildTrackKeyboard(docId, result) {
   return Markup.inlineKeyboard([row1, row2]);
 }
 
+/** Set HIDE_TAG_WARNING=true to suppress the "no affiliate tag" note. */
+function tagWarningHidden() {
+  const v = String(process.env.HIDE_TAG_WARNING || '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
 function formatTrackedProduct(result, docId) {
   const lines = [
     'Take a look at this product...',
@@ -167,7 +173,7 @@ function formatTrackedProduct(result, docId) {
     '',
     'Click /list to see all the products I am tracking for you 😃',
   ];
-  if (!result.hasAffiliateTag) {
+  if (!result.hasAffiliateTag && !tagWarningHidden()) {
     lines.push('', '⚠️ No affiliate tag configured yet — the link is clean but not monetised.');
   }
   return lines.join('\n');

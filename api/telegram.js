@@ -29,7 +29,7 @@
 
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
-const { convertAffiliateLink, isSupportedLink } = require('../lib/affiliate');
+const { convertAffiliateLink } = require('../lib/affiliate');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -61,11 +61,18 @@ function productDocId(result) {
   return result.marketplace + '_' + result.productId;
 }
 
-/** Return the first whitespace-delimited token that looks like a supported link. */
-function extractSupportedUrl(text) {
+/**
+ * Return the first token that looks like a URL — ANY url, not just
+ * Amazon/Flipkart, so other platforms can be handed back untouched.
+ */
+function extractUrl(text) {
   if (!text) return null;
-  for (const token of String(text).split(/\s+/)) {
-    if (isSupportedLink(token)) return token;
+  const tokens = String(text).split(/\s+/);
+  for (const t of tokens) {
+    if (/^https?:\/\//i.test(t)) return t;
+  }
+  for (const t of tokens) {
+    if (/^(?:www\.)?[a-z0-9-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(t)) return t;
   }
   return null;
 }
@@ -293,11 +300,11 @@ function registerHandlers(bot) {
       const text = ctx.message.text || '';
       if (text.startsWith('/')) return; // commands are handled above
 
-      const url = extractSupportedUrl(text);
+      const url = extractUrl(text);
       if (!url) {
         await ctx.reply(
-          'Send me an Amazon or Flipkart product link and I will convert it into an ' +
-            'affiliate link and track its price.\n\nExample: https://www.amazon.in/dp/B08N5WRWNW'
+          'Send me a product link. I convert Amazon and Flipkart links into ' +
+            'affiliate links and track their prices.\n\nExample: https://www.amazon.in/dp/B08N5WRWNW'
         );
         return;
       }
@@ -307,6 +314,16 @@ function registerHandlers(bot) {
 
       if (!result.ok) {
         await ctx.reply('⚠️ ' + (CONVERT_ERRORS[result.reason] || 'Could not convert that link.'));
+        return;
+      }
+
+      // Other platforms: hand the link back unchanged, no affiliate tag, no tracking.
+      if (result.marketplace === 'other') {
+        await ctx.reply(
+          '🔗 Here is your link, unchanged — no affiliate tag added.\n\n' +
+            result.affiliateUrl +
+            '\n\nI can track prices for Amazon and Flipkart links only.'
+        );
         return;
       }
 
@@ -543,7 +560,7 @@ module.exports = async (req, res) => {
 module.exports._internals = {
   escapeHtml,
   productDocId,
-  extractSupportedUrl,
+  extractUrl,
   upsertUser,
   trackProduct,
   untrackProduct,

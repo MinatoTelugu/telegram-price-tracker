@@ -92,7 +92,7 @@ async function processProduct(doc) {
       { lastCheckedAt: FieldValue.serverTimestamp(), lastCheckError: result.reason },
       { merge: true }
     );
-    return { id: doc.id, status: 'skipped', reason: result.reason };
+    return { id: doc.id, status: 'skipped', reason: result.reason, httpStatus: result.status || null, snippet: result.snippet || null };
   }
 
   const oldPrice = typeof data.lastPrice === 'number' ? data.lastPrice : null;

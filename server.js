@@ -4,18 +4,21 @@
  * Long-running server for Koyeb / Railway / any host that runs a process
  * (as opposed to Vercel's serverless functions).
  *
- * Why this exists: on Vercel the bot must use a webhook, and a webhook URL can
- * be broken from outside — which is exactly what kept happening. Here the bot
- * uses Telegram LONG POLLING instead: there is no webhook to break, no URL to
- * re-register, no serverless time limit, and no cron frequency cap.
+ * On Vercel the bot must use a webhook, and a webhook URL can be broken from
+ * outside — which is exactly what kept happening. Here the bot uses Telegram
+ * LONG POLLING instead: no webhook to break, no URL to re-register, no
+ * serverless time limit, no cron frequency cap.
  *
- * It runs the exact same handlers as the Vercel deployment:
- *   - api/telegram.js  -> the bot handlers (shared)
- *   - api/cron.js      -> price checks + price-drop alerts
- *   - api/deals.js     -> the deals auto-poster
+ * This file also serves the WEBSITE and the /api/ endpoints, because Koyeb has
+ * no equivalent of Vercel's routing:
+ *   /                     -> public/index.html  (the price-history page)
+ *   /logo.jpg             -> public/logo.jpg
+ *   /api/track?id=...     -> api/track.js
+ *   /api/cron, /api/deals -> the job endpoints
+ *   /health               -> a small JSON liveness blob
  *
  * Env vars: everything from .env.example, plus optionally
- *   PORT         -> HTTP port for the health endpoint (default 8080)
+ *   PORT         -> HTTP port (default 8080)
  *   PRICE_CRON   -> cron expression for price checks (default every 6 hours)
  *   DEALS_CRON   -> cron expression for deals       (default every 6 hours, offset)
  * ---------------------------------------------------------------------------
@@ -25,6 +28,8 @@
 process.env.DISABLE_WEBHOOK_MANAGEMENT = '1';
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 
@@ -49,19 +54,46 @@ if (!hasFirebase) {
       'FIREBASE_SERVICE_ACCOUNT_KEY (or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY).'
   );
 }
-
-// ---- health endpoint ------------------------------------------------------
-// Started immediately so the platform's health check passes while the bot is
-// still connecting — otherwise the platform may kill the instance mid-startup.
-const port = process.env.PORT || 8080;
-http
-  .createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, mode: 'long-polling', uptime: process.uptime() }));
-  })
-  .listen(port, () => console.log('Health server listening on port ' + port));
+if (!process.env.BITLY_ACCESS_TOKEN) {
+  console.warn('NOTE: BITLY_ACCESS_TOKEN is not set, so links will not be shortened.');
+}
+if (!process.env.WEB_APP_URL) {
+  console.warn('NOTE: WEB_APP_URL is not set, so the "Price History" button will be hidden.');
+}
 
 // ---- helpers --------------------------------------------------------------
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+function sendFile(res, filePath) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream' });
+    res.end(data);
+  });
+}
+
+function sendJson(res, status, payload) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
+
 /** Load a job module lazily so a bad config can't crash the whole process. */
 function loadJob(name) {
   try {
@@ -94,6 +126,83 @@ async function runJob(name) {
   const r = await callHandler(handler, { host: 'localhost' });
   console.log(name + ' ->', r.statusCode, String(r.body).slice(0, 300));
 }
+
+// ---- website + API --------------------------------------------------------
+const server = http.createServer(async (req, res) => {
+  let parsed;
+  try {
+    parsed = new URL(req.url, 'http://localhost');
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: 'bad url' });
+    return;
+  }
+  const pathname = parsed.pathname;
+
+  // Liveness for the platform's health check.
+  if (pathname === '/health' || pathname === '/healthz') {
+    sendJson(res, 200, { ok: true, mode: 'long-polling', uptime: process.uptime() });
+    return;
+  }
+
+  // API endpoints — same files Vercel would run.
+  if (pathname.startsWith('/api/')) {
+    const name = pathname.slice(5).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!name) {
+      sendJson(res, 404, { ok: false, error: 'unknown endpoint' });
+      return;
+    }
+    let handler = null;
+    try {
+      handler = require('./api/' + name);
+    } catch (err) {
+      console.error('api/' + name + ' could not be loaded:', err.message);
+    }
+    if (typeof handler !== 'function') {
+      sendJson(res, 404, { ok: false, error: 'unknown endpoint: ' + name });
+      return;
+    }
+    // Vercel provides req.query; give the handlers the same shape here.
+    const query = {};
+    parsed.searchParams.forEach((value, key) => {
+      query[key] = value;
+    });
+    req.query = query;
+    try {
+      await handler(req, res);
+    } catch (err) {
+      console.error('api/' + name + ' failed:', err.message);
+      if (!res.headersSent) sendJson(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
+  // Static site.
+  const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const filePath = path.join(PUBLIC_DIR, rel);
+
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
+
+  fs.access(filePath, fs.constants.R_OK, (err) => {
+    if (!err) {
+      sendFile(res, filePath);
+      return;
+    }
+    // Unknown path with no file extension -> serve the app page.
+    if (!path.extname(rel)) {
+      sendFile(res, path.join(PUBLIC_DIR, 'index.html'));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+  });
+});
+
+const port = process.env.PORT || 8080;
+server.listen(port, () => console.log('Website + API listening on port ' + port));
 
 // ---- bot (long polling) ---------------------------------------------------
 let bot = null;

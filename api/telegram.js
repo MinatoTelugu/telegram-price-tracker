@@ -32,6 +32,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { fetchProduct } = require('../lib/scraper');
+const { shortenUrl } = require('../lib/shorten');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -175,7 +176,7 @@ async function sendTrackingList(ctx) {
     let backfilled = 0;
     for (const it of items) {
       if (it.data.title) continue;
-      const src = it.data.cleanUrl || it.data.affiliateUrl || '';
+      const src = it.data.resolvedUrl || it.data.cleanUrl || it.data.affiliateUrl || '';
 
       let got = titleFromUrl(src);
       if (!got && src && backfilled < 3) {
@@ -203,20 +204,25 @@ async function sendTrackingList(ctx) {
     }
 
     const lines = [];
-    items.forEach((it, i) => {
+    let index = 0;
+    for (const it of items) {
+      index++;
       const d = it.data;
       const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
-      const title = d.title || titleFromUrl(d.cleanUrl || d.affiliateUrl || '') || d.productId || it.doc.id;
+      const title =
+        d.title ||
+        titleFromUrl(d.resolvedUrl || d.cleanUrl || d.affiliateUrl || '') ||
+        d.productId ||
+        it.doc.id;
       const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
       const buy = d.affiliateUrl || d.cleanUrl;
-      const hist = (function () {
-        const base = webAppBase();
-        return base ? base + '/?id=' + encodeURIComponent(it.doc.id) : null;
-      })();
+      const buyLink = buy ? (await shortenUrl(buy)) || buy : null;
+      const base = webAppBase();
+      const hist = base ? base + '/?id=' + encodeURIComponent(it.doc.id) : null;
 
-      lines.push(i + 1 + '. <b>' + escapeHtml(title) + '</b>');
+      lines.push(index + '. <b>' + escapeHtml(title) + '</b>');
       lines.push('');
-      if (buy) lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+      if (buyLink) lines.push('<a href="' + escapeHtml(buyLink) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
       lines.push('');
       if (hist) lines.push('<a href="' + escapeHtml(hist) + '">[ View Price History! ]</a>');
       lines.push('');
@@ -226,7 +232,7 @@ async function sendTrackingList(ctx) {
         lines.push('🔴 You stopped tracking this. Send the link again to resume.');
       }
       lines.push(LIST_DIVIDER);
-    });
+    }
     lines.push('');
     lines.push('🦋 <b>Total Products: ' + items.length + '</b>');
 
@@ -291,6 +297,7 @@ async function trackProduct(result, from, info) {
     active: true,
   };
 
+  if (result.resolvedUrl) data.resolvedUrl = result.resolvedUrl;
   if (extra.title) data.title = extra.title;
   if (extra.imageUrl) data.imageUrl = extra.imageUrl;
   if (extra.price != null) {
@@ -394,9 +401,10 @@ function formatStamp(date) {
 }
 
 /** The "link sent" confirmation, matching the reference layout. */
-function formatTrackingConfirmation(result, info) {
+function formatTrackingConfirmation(result, info, openUrl) {
   const market = result.marketplace === 'amazon' ? 'Amazon' : 'Flipkart';
   const link = result.cleanUrl || result.affiliateUrl;
+  const open = openUrl || result.affiliateUrl || link;
   const lines = [
     '<a href="' + escapeHtml(link) + '">' + escapeHtml(link) + '</a>',
     '',
@@ -408,7 +416,7 @@ function formatTrackingConfirmation(result, info) {
     const sym = (info.currency || 'INR') === 'INR' ? '₹' : '';
     lines.push('', 'Current Price: <b>' + sym + Number(info.price).toLocaleString('en-IN') + '</b>');
   }
-  lines.push('', '<a href="' + escapeHtml(result.affiliateUrl || link) + '">Click here to open in ' + market + '!</a>');
+  lines.push('', '<a href="' + escapeHtml(open) + '">Click here to open in ' + market + '!</a>');
   lines.push('', '⏱️ Updated at [ ' + formatStamp(new Date()) + ' ]');
   if (!result.hasAffiliateTag && !tagWarningHidden()) {
     lines.push('', '⚠️ No affiliate tag configured yet — the link is clean but not monetised.');
@@ -506,6 +514,8 @@ function registerHandlers(bot) {
             ? 'set'
             : 'not set')
       );
+      lines.push('BITLY_ACCESS_TOKEN: ' + (process.env.BITLY_ACCESS_TOKEN ? 'set' : 'not set'));
+      lines.push('WEB_APP_URL: ' + (process.env.WEB_APP_URL || 'not set'));
       lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));
       if (fbError) lines.push('firebase load error: <code>' + escapeHtml(String(fbError).slice(0, 220)) + '</code>');
 
@@ -651,8 +661,14 @@ function registerHandlers(bot) {
       await upsertUser(ctx.from);
 
       // Fetch the title/price now so the confirmation matches the reference.
-      // Start from a name derived from the link, then let the page improve it.
-      let info = { title: titleFromUrl(url), price: null, currency: 'INR', imageUrl: null };
+      // Start from a name derived from the RESOLVED link — a short link carries
+      // no product name, but the URL it redirects to does.
+      let info = {
+        title: titleFromUrl(result.resolvedUrl || url || result.cleanUrl),
+        price: null,
+        currency: 'INR',
+        imageUrl: null,
+      };
       try {
         const scraped = await withTimeout(
           fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
@@ -672,7 +688,9 @@ function registerHandlers(bot) {
 
       const docId = await trackProduct(result, ctx.from, info);
 
-      const replyText = formatTrackingConfirmation(result, info);
+      // Shorten the outgoing link with Bitly when a token is configured.
+      const shortLink = await shortenUrl(result.affiliateUrl || result.cleanUrl);
+      const replyText = formatTrackingConfirmation(result, info, shortLink || null);
       const extra = { parse_mode: 'HTML', ...buildTrackKeyboard(docId, result) };
       let sent = false;
       if (info.imageUrl && typeof ctx.replyWithPhoto === 'function') {

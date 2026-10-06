@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Price History</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#2a2f3a; --txt:#e8eaed; --muted:#9aa4b2; --accent:#4f9cf9; --green:#34d399; --red:#f87171; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         background:var(--bg); color:var(--txt); display:flex; justify-content:center; padding:24px 16px 48px; }
+  .wrap { width:100%; max-width:760px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px; }
+  h1 { font-size:18px; margin:0 0 4px; font-weight:600; }
+  .muted { color:var(--muted); font-size:13px; }
+  .price { font-size:34px; font-weight:700; margin:14px 0 2px; }
+  .delta { font-size:14px; }
+  .delta.down { color:var(--green); }
+  .delta.up { color:var(--red); }
+  .chart-box { position:relative; height:320px; margin-top:18px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
+  .stat { flex:1 1 140px; background:#12151c; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .stat .k { color:var(--muted); font-size:12px; }
+  .stat .v { font-size:18px; font-weight:600; margin-top:2px; }
+  .cta { display:inline-block; margin-top:18px; background:var(--accent); color:#08121f; font-weight:600;
+         text-decoration:none; padding:11px 18px; border-radius:10px; }
+  .err { color:var(--red); }
+  .center { text-align:center; padding:40px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="center muted" id="loading">Loading price history…</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var id = params.get('id');
+  var card = document.getElementById('card');
+
+  function fail(msg) {
+    card.innerHTML = '<h1>Price History</h1><p class="err">' + msg + '</p>';
+  }
+
+  if (!id) { fail('No product id was provided. Open this page from the Telegram “Price Track” button.'); return; }
+
+  function money(n, cur) {
+    var sym = cur === 'INR' ? '\u20B9' : '';
+    return sym + Number(n).toLocaleString('en-IN');
+  }
+
+  fetch('/api/track?id=' + encodeURIComponent(id))
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) { fail('Could not load this product (' + (data.error || 'unknown') + ').'); return; }
+      render(data);
+    })
+    .catch(function () { fail('Network error while loading price history.'); });
+
+  function render(data) {
+    var p = data.product;
+    var hist = data.history || [];
+    var title = p.title || p.productId;
+    var last = p.lastPrice != null ? p.lastPrice : (hist.length ? hist[hist.length - 1].price : null);
+    var first = hist.length ? hist[0].price : null;
+    var min = hist.length ? Math.min.apply(null, hist.map(function (h) { return h.price; })) : null;
+    var max = hist.length ? Math.max.apply(null, hist.map(function (h) { return h.price; })) : null;
+
+    var deltaHtml = '';
+    if (first != null && last != null && first !== last) {
+      var diff = last - first;
+      var pct = (diff / first) * 100;
+      var cls = diff < 0 ? 'down' : 'up';
+      var sign = diff < 0 ? '' : '+';
+      deltaHtml = '<div class="delta ' + cls + '">' + sign + money(Math.abs(diff), p.currency) +
+                  ' (' + sign + pct.toFixed(1) + '%) vs 30 days ago</div>';
+    }
+
+    var marketLabel = p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : p.marketplace);
+    var buy = p.affiliateUrl || p.cleanUrl || '#';
+
+    card.innerHTML =
+      '<h1>' + escapeHtml(title) + '</h1>' +
+      '<div class="muted">' + escapeHtml(marketLabel) + ' • ' + escapeHtml(p.productId) + '</div>' +
+      '<div class="price">' + (last != null ? money(last, p.currency) : '—') + '</div>' +
+      deltaHtml +
+      '<div class="chart-box"><canvas id="chart"></canvas></div>' +
+      '<div class="row">' +
+        '<div class="stat"><div class="k">Lowest (30d)</div><div class="v">' + (min != null ? money(min, p.currency) : '—') + '</div></div>' +
+        '<div class="stat"><div class="k">Highest (30d)</div><div class="v">' + (max != null ? money(max, p.currency) : '—') + '</div></div>' +
+        '<div class="stat"><div class="k">Data points</div><div class="v">' + hist.length + '</div></div>' +
+      '</div>' +
+      '<a class="cta" href="' + escapeAttr(buy) + '" target="_blank" rel="noopener">Buy now →</a>';
+
+    if (!hist.length) {
+      document.querySelector('.chart-box').innerHTML = '<div class="center muted">No price points recorded yet. Check back after the next scheduled run.</div>';
+      return;
+    }
+
+    var labels = hist.map(function (h) {
+      if (!h.t) return '';
+      var d = new Date(h.t);
+      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+    });
+    var values = hist.map(function (h) { return h.price; });
+
+    new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Price',
+          data: values,
+          borderColor: '#4f9cf9',
+          backgroundColor: 'rgba(79,156,249,0.15)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          pointHoverRadius: 5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: '#20242e' }, ticks: { color: '#9aa4b2', maxTicksLimit: 8 } },
+          y: { grid: { color: '#20242e' }, ticks: { color: '#9aa4b2', callback: function (v) { return money(v, p.currency); } } }
+        }
+      }
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function escapeAttr(s) {
+    return String(s == null ? '#' : s).replace(/"/g, '%22').replace(/</g, '%3C').replace(/>/g, '%3E');
+  }
+})();
+</script>
+</body>
+</html>

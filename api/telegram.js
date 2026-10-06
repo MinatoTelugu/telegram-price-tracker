@@ -103,11 +103,20 @@ function titleFromUrl(urlStr) {
 
   if (host.includes('flipkart')) {
     const i = parts.indexOf('p');
-    return i > 0 ? prettifySlug(parts[i - 1]) : null;
+    if (i > 0) {
+      const slug = parts[i - 1];
+      // The app share link is /product/p/itme?pid=... — "product" is not a name.
+      if (slug && slug.toLowerCase() !== 'product') return prettifySlug(slug);
+    }
+    return null;
   }
   if (host.includes('amazon')) {
     const i = parts.findIndex((p) => p === 'dp' || p === 'product' || p === 'd');
-    return i > 0 ? prettifySlug(parts[i - 1]) : null;
+    if (i > 0) {
+      const slug = parts[i - 1];
+      if (slug && slug.toLowerCase() !== 'product') return prettifySlug(slug);
+    }
+    return null;
   }
   return null;
 }

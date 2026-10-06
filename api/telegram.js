@@ -796,7 +796,7 @@ async function buildDiagnostic(req) {
 
   // Always keep the webhook correct: simply opening this page repairs it if it
   // has been mangled. Idempotent — if it is already right, nothing changes.
-  if (process.env.BOT_TOKEN) {
+  if (process.env.DISABLE_WEBHOOK_MANAGEMENT !== '1' && process.env.BOT_TOKEN) {
     const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
       .split(',')[0]
       .trim();

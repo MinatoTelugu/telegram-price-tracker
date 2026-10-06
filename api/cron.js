@@ -144,6 +144,10 @@ async function processProduct(doc) {
  * the next scheduled run, so a bad registration can't silently kill the bot.
  */
 async function ensureWebhook(req) {
+  // When running under a long-polling host (Koyeb), nothing may set a webhook.
+  if (process.env.DISABLE_WEBHOOK_MANAGEMENT === '1') {
+    return { ok: true, skipped: 'webhook management disabled' };
+  }
   const token = process.env.BOT_TOKEN;
   if (!token) return { ok: false, reason: 'no_token' };
 

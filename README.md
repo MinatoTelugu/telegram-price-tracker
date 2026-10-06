@@ -48,6 +48,33 @@ Everything runs on **Vercel serverless functions** — no long-running server.
 Because products are shared, if ten users track the same item the cron job
 checks it **once**, not ten times.
 
+## Running on Koyeb (long polling — no webhook)
+
+On Koyeb the app runs as a normal long-running process, so the bot uses
+**Telegram long polling** instead of a webhook. That means there is **no webhook
+URL to register or repair**, no serverless time limit, and no cron frequency cap
+— which removes the failure mode that kept taking the bot offline on Vercel.
+
+1. Push this repo to GitHub.
+2. In Koyeb: **Create Service → GitHub** and pick this repository.
+3. Builder: **Dockerfile** (already included). Port: **8080**.
+4. Add the same environment variables as for Vercel — `BOT_TOKEN`,
+   the Firebase credentials, `AMAZON_AFFILIATE_TAG`, `BITLY_ACCESS_TOKEN`, etc.
+   `WEB_APP_URL` is still worth setting (so the "Price History" button points at
+   your site). `CRON_SECRET` and `TELEGRAM_WEBHOOK_SECRET` are **not** needed.
+5. Deploy. The logs should show `Bot started in long-polling mode.`
+
+The scheduled jobs run inside the process (`server.js`):
+
+| Job | Env var | Default |
+| --- | --- | --- |
+| Price checks | `PRICE_CRON` | `0 */6 * * *` (every 6 hours) |
+| Deals posting | `DEALS_CRON` | `30 */6 * * *` (every 6 hours, offset) |
+
+> **Run the bot on either Vercel or Koyeb — not both at once.** Two consumers of
+> the same bot token fight over the updates, and the Koyeb process clears the
+> webhook on startup, which would break the Vercel deployment.
+
 ## Setup
 
 ### 1. Create the Telegram bot

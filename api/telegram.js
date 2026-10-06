@@ -165,6 +165,22 @@ async function resolveAdminId(ctx) {
 
 const LIST_DIVIDER = '_______________________________________';
 
+// ---- simple per-user rate limit ------------------------------------------
+// Matches the reference bot's "Too many requests" guard. Set
+// RATE_LIMIT_PER_MINUTE=0 to disable it.
+const RATE_LIMIT = parseInt(process.env.RATE_LIMIT_PER_MINUTE || '20', 10);
+const rateBuckets = new Map();
+
+function isRateLimited(userId) {
+  if (!RATE_LIMIT || RATE_LIMIT <= 0) return false;
+  const now = Date.now();
+  const hits = (rateBuckets.get(userId) || []).filter((t) => now - t < 60000);
+  hits.push(now);
+  if (rateBuckets.size > 5000) rateBuckets.clear(); // safety valve
+  rateBuckets.set(userId, hits);
+  return hits.length > RATE_LIMIT;
+}
+
 /**
  * Build and send the tracking list. Shows BOTH products being tracked and
  * products the user has stopped, in the reference layout:
@@ -411,7 +427,13 @@ function buildTrackKeyboard(docId, result) {
   if (historyUrl) row2.push(Markup.button.url('📊 Price History', historyUrl));
   row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
-  return Markup.inlineKeyboard([row1, row2]);
+  const rows = [row1, row2];
+
+  // A full-width fifth button, as in the reference layout.
+  const backup = process.env.BACKUP_BOT_URL || CHANNEL_URL;
+  if (backup) rows.push([Markup.button.url('🤖 Join Backup Bot', backup)]);
+
+  return Markup.inlineKeyboard(rows);
 }
 
 /** Set HIDE_TAG_WARNING=true to suppress the "no affiliate tag" note. */
@@ -467,6 +489,19 @@ const CONVERT_ERRORS = {
 const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track that link. Please try again later.';
 
 function registerHandlers(bot) {
+  // Rate limit first, so a flood gets one clear message instead of many replies.
+  bot.use(async (ctx, next) => {
+    try {
+      if (ctx.from && isRateLimited(String(ctx.from.id))) {
+        await ctx.reply('⛔ Too many requests, please slow down!');
+        return;
+      }
+    } catch (err) {
+      /* never block on the limiter itself */
+    }
+    return next();
+  });
+
   bot.start(async (ctx) => {
     const caption =
       '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +

@@ -543,6 +543,9 @@ module.exports = async (req, res) => {
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
+    // Never cache the diagnostic — a cached copy would hide the query string
+    // (e.g. ?fixWebhook=1) and confuse debugging.
+    res.setHeader('Cache-Control', 'no-store');
     res.end(JSON.stringify(diag));
     return;
   }

@@ -235,6 +235,7 @@ async function startPolling() {
     console.warn('deleteWebhook failed (continuing):', err.message);
   }
 
+  console.log('Starting Telegram polling...');
   try {
     await bot.launch();
     console.log('Bot started in long-polling mode.');

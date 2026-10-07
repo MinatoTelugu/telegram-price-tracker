@@ -96,6 +96,16 @@ function isPlaceholderSlug(slug) {
 }
 
 /**
+ * A stored title that is really just a placeholder word ("Product", "Item")
+ * must be treated as missing, so it gets re-derived instead of shown.
+ */
+function isPlaceholderTitle(title) {
+  const s = String(title || '').trim().toLowerCase();
+  if (!s) return true;
+  return PLACEHOLDER_SLUGS.has(s) || s.length < 4;
+}
+
+/**
  * Derive a product name straight from the link — no network needed.
  * Flipkart links carry the name as the path slug, and Amazon links usually do
  * too (e.g. /Samsung-Galaxy-M14-5G/dp/B0DFHCZMWY). This is the reliable
@@ -227,7 +237,8 @@ async function sendTrackingList(ctx) {
     // try the page if there is budget. Bounded so the list stays quick.
     let backfilled = 0;
     for (const it of items) {
-      if (it.data.title) continue;
+      // Re-derive when the title is missing OR is a stored placeholder.
+      if (it.data.title && !isPlaceholderTitle(it.data.title)) continue;
       const src = it.data.resolvedUrl || it.data.cleanUrl || it.data.affiliateUrl || '';
 
       let got = titleFromUrl(src);
@@ -249,11 +260,14 @@ async function sendTrackingList(ctx) {
         it.data.title = got;
         if (it.doc.ref) {
           try {
-            await it.doc.ref.set({ title: got }, { merge: true });
+            await it.doc.ref.set({ title: got, resolvedUrl: it.data.resolvedUrl || null }, { merge: true });
           } catch (e) {
             /* non-fatal */
           }
         }
+      } else if (isPlaceholderTitle(it.data.title)) {
+        // Drop a stored placeholder so it stops being shown as a name.
+        it.data.title = null;
       }
     }
 
@@ -264,7 +278,7 @@ async function sendTrackingList(ctx) {
       const d = it.data;
       const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
       const title =
-        d.title ||
+        (isPlaceholderTitle(d.title) ? null : d.title) ||
         titleFromUrl(d.resolvedUrl || d.cleanUrl || d.affiliateUrl || '') ||
         d.productId ||
         it.doc.id;
@@ -1051,6 +1065,7 @@ module.exports._internals = {
   productDocId,
   extractUrl,
   titleFromUrl,
+  isPlaceholderTitle,
   webAppBase,
   upsertUser,
   trackProduct,

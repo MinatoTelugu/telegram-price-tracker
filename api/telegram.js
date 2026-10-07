@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-22 (2026-10-07)';
+const BUILD = 'names-23 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -257,18 +257,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Gap between broadcast dispatches — 50ms default keeps us clear of 429s. */
 const BROADCAST_DELAY_MS = parseInt(process.env.BROADCAST_DELAY_MS || '50', 10);
 
-/** "www.myntra.com/..." -> "Myntra" — a friendly store label. */
-function storeLabelFromUrl(urlStr) {
-  try {
-    const host = new URL(/^https?:\/\//i.test(urlStr) ? urlStr : 'https://' + urlStr)
-      .hostname.toLowerCase()
-      .replace(/^www\./, '');
-    const base = host.split('.').slice(-2)[0] || host;
-    return base.charAt(0).toUpperCase() + base.slice(1);
-  } catch (err) {
-    return null;
-  }
-}
+
 
 const LIST_DIVIDER = '____________________________________';
 
@@ -1183,21 +1172,11 @@ function registerHandlers(bot) {
         return;
       }
 
-      // Other platforms: hand the link back unchanged, no affiliate tag, no tracking.
-      // A store we can CONVERT but not track: a clean, standalone conversion
-      // message — no price-tracking wording mixed in, no raw tracking URL.
+      // A store we can CONVERT but not track: reply with the converted link and
+      // NOTHING else — no header, no store label, no meta text. Sent as plain
+      // text (no parse_mode) so a URL containing & or ? is never mis-parsed.
       if (result.marketplace === 'other') {
-        const store = storeLabelFromUrl(url);
-        await ctx.reply(
-          '✅ <b>Affiliate Link Converted</b>' +
-            (store ? ' — ' + escapeHtml(store) : '') +
-            '\n\n<a href="' +
-            escapeHtml(result.affiliateUrl) +
-            '">' +
-            escapeHtml(result.affiliateUrl) +
-            '</a>',
-          { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }
-        );
+        await ctx.reply(result.affiliateUrl);
         return;
       }
 

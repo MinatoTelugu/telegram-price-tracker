@@ -17,7 +17,8 @@
  *   BOT_TOKEN              -> to post to the channel
  *   DEALS_CHANNEL_ID       -> channel chat id (default -1004386388150)
  *   BITLY_ACCESS_TOKEN     -> Bitly v4 token
- *   DEALS_MIN_DISCOUNT     -> threshold % (default 50)
+ *   MIN_DISCOUNT / DEALS_MIN_DISCOUNT -> threshold % (default 20)
+ *   ?minDiscount=NN        -> per-run override
  *   DEALS_MAX_PER_RUN      -> posts per run (default 5)
  *   DEALS_REPOST_DAYS      -> don't repost a deal within N days (default 30)
  *   DEALS_SOURCE_URLS      -> comma-separated listing pages to scrape
@@ -47,7 +48,10 @@ const CHANNEL_ID =
   process.env.TELEGRAM_CHANNEL_ID ||
   process.env.CHANNEL_ID ||
   '-1004386388150';
-const MIN_DISCOUNT = parseFloat(process.env.DEALS_MIN_DISCOUNT || '50');
+// Default is 20% — anything at or above it is posted.
+const MIN_DISCOUNT = parseFloat(
+  process.env.MIN_DISCOUNT || process.env.DEALS_MIN_DISCOUNT || '20'
+);
 const MAX_PER_RUN = parseInt(process.env.DEALS_MAX_PER_RUN || '5', 10);
 const REPOST_DAYS = parseInt(process.env.DEALS_REPOST_DAYS || '30', 10);
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
@@ -150,6 +154,12 @@ module.exports = async (req, res) => {
 
   const dryRun = Boolean(req.query && (req.query.dryRun === '1' || req.query.dryRun === 'true'));
 
+  // Threshold: ?minDiscount=NN wins, then MIN_DISCOUNT / DEALS_MIN_DISCOUNT,
+  // then the 20% default. So /api/deals?minDiscount=5 widens a single run.
+  const minDiscount = req.query && req.query.minDiscount
+    ? Number(req.query.minDiscount)
+    : Number(process.env.MIN_DISCOUNT || process.env.DEALS_MIN_DISCOUNT) || 20;
+
   if (!db) {
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');
@@ -159,9 +169,9 @@ module.exports = async (req, res) => {
 
   const started = Date.now();
   try {
-    console.log('deals: run start — minDiscount=' + MIN_DISCOUNT + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + CHANNEL_ID);
+    console.log('deals: run start — minDiscount=' + minDiscount + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + CHANNEL_ID);
 
-    const scan = await discoverDealsDetailed({ minDiscount: MIN_DISCOUNT, limit: MAX_PER_RUN * 4 });
+    const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4 });
     const deals = scan.deals;
 
     // Per-source detail, so a silent 0 is never a mystery again.
@@ -180,7 +190,7 @@ module.exports = async (req, res) => {
       console.log('deals: dry run — found ' + deals.length + ' deal(s), not posting');
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ok: true, dryRun: true, minDiscount: MIN_DISCOUNT, found: deals.length, deals }));
+      res.end(JSON.stringify({ ok: true, dryRun: true, minDiscount, found: deals.length, deals }));
       return;
     }
 
@@ -231,7 +241,7 @@ module.exports = async (req, res) => {
         ok: true,
         channel: CHANNEL_ID,
         deals_posted: posted.length,
-        minDiscount: MIN_DISCOUNT,
+        minDiscount,
         found: deals.length,
         postedCount: posted.length,
         posted,

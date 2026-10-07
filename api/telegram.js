@@ -473,9 +473,6 @@ function formatTrackingConfirmation(result, info, openUrl) {
   }
   lines.push('', '<a href="' + escapeHtml(open) + '">Click here to open in ' + market + '!</a>');
   lines.push('', '⏱️ Updated at [ ' + formatStamp(new Date()) + ' ]');
-  if (!result.hasAffiliateTag && !tagWarningHidden()) {
-    lines.push('', '⚠️ No affiliate tag configured yet — the link is clean but not monetised.');
-  }
   return lines.join('\n');
 }
 
@@ -506,13 +503,13 @@ function registerHandlers(bot) {
 
   bot.start(async (ctx) => {
     const caption =
-      '🎉 <b>Welcome to Ai Price Alert Bot!</b>\n\n' +
-      'Send me an Amazon or Flipkart product link and I will:\n' +
-      '• convert it into a clean affiliate link\n' +
-      '• start tracking its price for 30 days\n' +
-      '• alert you when the price drops\n\n' +
+      '🤖 <b>AI Price Alert Bot</b>\n\n' +
+      '🛒 Track product prices & get instant alerts\n' +
+      '📉 Price drops • 🔔 Smart alerts • ⚡ Real-time updates\n' +
+      '💰 Shop smarter. Save more.\n\n' +
+      'Send me an Amazon or Flipkart product link and I will start tracking its price.\n\n' +
       '<b>Commands</b>\n' +
-      '/mytracks – your tracked products\n' +
+      '/list – your tracked products\n' +
       '/untrack &lt;id&gt; – stop tracking one\n' +
       '/help – how it works';
     const keyboard = Markup.inlineKeyboard([
@@ -556,11 +553,11 @@ function registerHandlers(bot) {
     try {
       await ctx.reply(
         '<b>How it works</b>\n\n' +
-          '1. Paste an Amazon or Flipkart link (short links like amzn.to work too).\n' +
-          '2. I convert it into your affiliate link and start tracking the price.\n' +
-          '3. Every few hours a cron job checks the price and alerts you on a drop.\n' +
-          '4. Tap “📈 Price Track” to see the 30-day graph.\n\n' +
-          '/mytracks – your tracked products\n' +
+          '1. Paste an Amazon or Flipkart product link (short links like amzn.to work too).\n' +
+          '2. I start tracking its price for 30 days.\n' +
+          '3. Every few hours I check the price and alert you when it drops.\n' +
+          '4. Tap “📊 Price History” to see the 30-day graph.\n\n' +
+          '/list – your tracked products\n' +
           '/untrack &lt;id&gt; – stop tracking one',
         { parse_mode: 'HTML' }
       );
@@ -706,8 +703,8 @@ function registerHandlers(bot) {
       const url = extractUrl(text);
       if (!url) {
         await ctx.reply(
-          'Send me a product link. I convert Amazon and Flipkart links into ' +
-            'affiliate links and track their prices.\n\nExample: https://www.amazon.in/dp/B08N5WRWNW'
+          'Send me a product link and I will start tracking its price.\n\n' +
+            'Example: https://www.amazon.in/dp/B08N5WRWNW'
         );
         return;
       }
@@ -723,7 +720,7 @@ function registerHandlers(bot) {
       // Other platforms: hand the link back unchanged, no affiliate tag, no tracking.
       if (result.marketplace === 'other') {
         await ctx.reply(
-          '🔗 Here is your link, unchanged — no affiliate tag added.\n\n' +
+          '🔗 Here is your link:\n\n' +
             result.affiliateUrl +
             '\n\nI can track prices for Amazon and Flipkart links only.'
         );

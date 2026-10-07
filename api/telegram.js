@@ -97,12 +97,18 @@ function isPlaceholderSlug(slug) {
 
 /**
  * A stored title that is really just a placeholder word ("Product", "Item")
- * must be treated as missing, so it gets re-derived instead of shown.
+ * OR a raw product id ("B0DFHCZMWY", "MOBHETX6NVUH8VPG") must be treated as
+ * missing, so it gets re-derived instead of being shown as a name.
  */
-function isPlaceholderTitle(title) {
-  const s = String(title || '').trim().toLowerCase();
+function isPlaceholderTitle(title, productId) {
+  const s = String(title || '').trim();
   if (!s) return true;
-  return PLACEHOLDER_SLUGS.has(s) || s.length < 4;
+  if (productId && s.toLowerCase() === String(productId).toLowerCase()) return true;
+  if (PLACEHOLDER_SLUGS.has(s.toLowerCase())) return true;
+  if (s.length < 4) return true;
+  // ASIN / FSN style: all uppercase letters and digits, no spaces.
+  if (/^[A-Z0-9]{10,}$/.test(s)) return true;
+  return false;
 }
 
 /**
@@ -218,15 +224,15 @@ async function sendTrackingList(ctx) {
     }
     const uid = String(ctx.from.id);
 
-    const [activeSnap, stoppedSnap] = await Promise.all([
-      db.collection(COLLECTIONS.PRODUCTS).where('subscribers', 'array-contains', uid).limit(30).get(),
-      db.collection(COLLECTIONS.PRODUCTS).where('stoppedBy', 'array-contains', uid).limit(30).get(),
-    ]);
+    // Only ACTIVELY tracked products. Stopped products are not listed at all,
+    // and they are not counted in the total.
+    const activeSnap = await db
+      .collection(COLLECTIONS.PRODUCTS)
+      .where('subscribers', 'array-contains', uid)
+      .limit(30)
+      .get();
 
-    const seen = new Set();
-    const items = [];
-    activeSnap.docs.forEach((d) => { seen.add(d.id); items.push({ doc: d, data: d.data(), active: true }); });
-    stoppedSnap.docs.forEach((d) => { if (!seen.has(d.id)) { seen.add(d.id); items.push({ doc: d, data: d.data(), active: false }); } });
+    const items = activeSnap.docs.map((d) => ({ doc: d, data: d.data(), active: true }));
 
     if (!items.length) {
       await ctx.reply('You are not tracking anything yet. Send an Amazon or Flipkart link to start.');
@@ -237,8 +243,8 @@ async function sendTrackingList(ctx) {
     // try the page if there is budget. Bounded so the list stays quick.
     let backfilled = 0;
     for (const it of items) {
-      // Re-derive when the title is missing OR is a stored placeholder.
-      if (it.data.title && !isPlaceholderTitle(it.data.title)) continue;
+      // Re-derive when the title is missing, a placeholder, or a raw id.
+      if (!isPlaceholderTitle(it.data.title, it.data.productId)) continue;
       const src = it.data.resolvedUrl || it.data.cleanUrl || it.data.affiliateUrl || '';
 
       let got = titleFromUrl(src);
@@ -278,7 +284,7 @@ async function sendTrackingList(ctx) {
       const d = it.data;
       const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
       const title =
-        (isPlaceholderTitle(d.title) ? null : d.title) ||
+        (!isPlaceholderTitle(d.title, d.productId) ? d.title : null) ||
         titleFromUrl(d.resolvedUrl || d.cleanUrl || d.affiliateUrl || '') ||
         d.productId ||
         it.doc.id;
@@ -294,11 +300,7 @@ async function sendTrackingList(ctx) {
       lines.push('');
       if (hist) lines.push('<a href="' + escapeHtml(hist) + '">[ View Price History! ]</a>');
       lines.push('');
-      if (it.active) {
-        lines.push('Click /stop_' + token + ' to stop this product.');
-      } else {
-        lines.push('🔴 You stopped tracking this. Send the link again to resume.');
-      }
+      lines.push('Click /stop_' + token + ' to stop this product.');
       lines.push(LIST_DIVIDER);
     }
     lines.push('');
@@ -705,6 +707,37 @@ function registerHandlers(bot) {
       });
     } catch (err) {
       console.error('stop handler failed', err);
+    }
+  });
+
+  // Permanently remove a product from the user's record (tracked and stopped).
+  bot.hears(/^\/remove_([a-z0-9]+)\b/i, async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+      const token = String(ctx.match[1]).toLowerCase();
+      const snap = await db.collection(COLLECTIONS.PRODUCTS).where('stopToken', '==', token).limit(1).get();
+      if (snap.empty) {
+        await ctx.reply('I could not find that product.');
+        return;
+      }
+      const doc = snap.docs[0];
+      const d = doc.data();
+      await doc.ref.set(
+        {
+          subscribers: admin.firestore.FieldValue.arrayRemove(String(ctx.from.id)),
+          stoppedBy: admin.firestore.FieldValue.arrayRemove(String(ctx.from.id)),
+        },
+        { merge: true }
+      );
+      await ctx.reply('🗑️ Removed <b>' + escapeHtml(d.title || d.productId || doc.id) + '</b> from your list.', {
+        parse_mode: 'HTML',
+      });
+    } catch (err) {
+      console.error('remove handler failed', err);
     }
   });
 

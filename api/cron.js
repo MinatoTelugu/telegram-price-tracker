@@ -147,6 +147,27 @@ async function processProduct(doc) {
   const url = isDeadShortLink && data.affiliateUrl ? data.affiliateUrl : storedUrl;
   const now = new Date();
 
+  // Keep the stored affiliate link current. A product tracked before the
+  // Cuelinks integration (or one whose conversion failed at the time) has no
+  // affiliateUrl — so we convert and persist it here, once, rather than leaving
+  // the record without a working link.
+  if (!data.affiliateUrl && data.cleanUrl) {
+    try {
+      const { convertAffiliateLink } = require('../lib/affiliate');
+      const conv = await convertAffiliateLink(data.cleanUrl);
+      if (conv && conv.ok && conv.affiliateUrl) {
+        await doc.ref.set(
+          { affiliateUrl: conv.affiliateUrl, affiliateVia: conv.via || null },
+          { merge: true }
+        );
+        data.affiliateUrl = conv.affiliateUrl;
+        console.log('cron: stored a converted link for ' + doc.id + ' via ' + (conv.via || 'affiliate'));
+      }
+    } catch (err) {
+      console.warn('cron: affiliate conversion failed for ' + doc.id + ' — ' + err.message);
+    }
+  }
+
   const result = await fetchProduct(url, data.marketplace);
 
   if (!result.ok) {

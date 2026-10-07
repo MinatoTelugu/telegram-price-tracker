@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-10 (2026-10-07)';
+const BUILD = 'names-11 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -376,9 +376,29 @@ async function sendTrackingList(ctx) {
       const price = d.lastPrice != null ? '₹' + Number(d.lastPrice).toLocaleString('en-IN') : null;
       const meta = [price, market].filter(Boolean).join(' · ');
 
-      // Two compact lines per product — no link lines, no /stop_ text.
-      lines.push('<b>' + index + '.</b> ' + escapeHtml(title));
-      if (meta) lines.push('     ' + escapeHtml(meta));
+      // The explicit, clickable per-item format:
+      //   N. Title
+      //   Click here to view in <Store>!
+      //   [ View Price History! ]
+      //   Click /stop_<TOKEN> to stop tracking this product.
+      const buy = d.affiliateUrl || d.cleanUrl;
+      const token = String(rawToken).toUpperCase();
+      const base = webAppBase();
+
+      lines.push('<b>' + index + '. ' + escapeHtml(title) + '</b>');
+      if (meta) lines.push(escapeHtml(meta));
+      if (buy) {
+        lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+      }
+      if (base) {
+        lines.push(
+          '<a href="' + escapeHtml(base + '/?id=' + encodeURIComponent(it.doc.id)) + '">[ View Price History! ]</a>'
+        );
+      } else {
+        lines.push('Click /history_' + token + ' to view the price history.');
+      }
+      lines.push('Click /stop_' + token + ' to stop tracking this product.');
+      lines.push(LIST_DIVIDER);
 
       // Its own buttons, numbered to match the item above. Telegram keyboards
       // attach to a message, so numbering is how we tie a button to its item.
@@ -917,11 +937,38 @@ function registerHandlers(bot) {
           /* ignore */
         }
       }
+      await sendPriceHistory(ctx, String(ctx.match[1]));
+    } catch (err) {
+      console.error('history handler failed', err);
+    }
+  });
+
+  // /history_<TOKEN> — the same thing, reachable straight from the /list text.
+  bot.hears(/^\/history_([a-z0-9]+)\b/i, async (ctx) => {
+    try {
+      if (!ctx.from) return;
       if (!db) {
         await ctx.reply(DB_DOWN);
         return;
       }
-      const docId = String(ctx.match[1]);
+      const token = String(ctx.match[1]).toLowerCase();
+      const doc = await findProductByToken(String(ctx.from.id), token);
+      if (!doc) {
+        await ctx.reply('I could not find that product. Send /list to see your tracking list.');
+        return;
+      }
+      await sendPriceHistory(ctx, doc.id);
+    } catch (err) {
+      console.error('history command failed', err);
+    }
+  });
+
+  async function sendPriceHistory(ctx, docId) {
+    try {
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
       const doc = await db.collection(COLLECTIONS.PRODUCTS).doc(docId).get();
       if (!doc.exists) {
         await ctx.reply('I could not find that product.');
@@ -965,9 +1012,9 @@ function registerHandlers(bot) {
       }
       await ctx.reply(lines.join('\n'), opts);
     } catch (err) {
-      console.error('history handler failed', err);
+      console.error('price history failed', err);
     }
-  });
+  }
 
   bot.on('text', async (ctx) => {
     try {

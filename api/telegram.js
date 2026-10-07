@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-13 (2026-10-07)';
+const BUILD = 'names-14 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -387,11 +387,13 @@ async function sendTrackingList(ctx) {
       const token = String(rawToken).toUpperCase();
       const base = webAppBase();
 
+      // Airy layout, as in the reference: a blank line between every line.
       lines.push('🛍️ <b>' + index + '. ' + escapeHtml(title) + '</b>');
       lines.push('🏷️ <i>' + escapeHtml(market) + '</i>');
       lines.push('');
       if (buy) {
         lines.push('🔗 <a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+        lines.push('');
       }
       if (base) {
         lines.push(
@@ -402,6 +404,7 @@ async function sendTrackingList(ctx) {
       } else {
         lines.push('📊 Click /history_' + token + ' to view the price history.');
       }
+      lines.push('');
       lines.push('🛑 Click <code>/stop_' + token + '</code> to stop tracking this product.');
       // The gap between products — a blank line, no divider.
       lines.push('');

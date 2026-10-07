@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-21 (2026-10-07)';
+const BUILD = 'names-22 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -253,6 +253,22 @@ async function findProductByToken(uid, token) {
 
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Gap between broadcast dispatches — 50ms default keeps us clear of 429s. */
+const BROADCAST_DELAY_MS = parseInt(process.env.BROADCAST_DELAY_MS || '50', 10);
+
+/** "www.myntra.com/..." -> "Myntra" — a friendly store label. */
+function storeLabelFromUrl(urlStr) {
+  try {
+    const host = new URL(/^https?:\/\//i.test(urlStr) ? urlStr : 'https://' + urlStr)
+      .hostname.toLowerCase()
+      .replace(/^www\./, '');
+    const base = host.split('.').slice(-2)[0] || host;
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  } catch (err) {
+    return null;
+  }
+}
 
 const LIST_DIVIDER = '____________________________________';
 
@@ -671,6 +687,9 @@ const CONVERT_ERRORS = {
   shortlink_unresolved: 'I could not open that short link (it may have expired).',
   invalid_url: 'That does not look like a valid link.',
   empty_input: 'Please send a link.',
+  // Shown as a clear warning rather than handing back a raw/broken link.
+  unsupported_store: '⚠️ <b>Store Not Supported</b>\n\nI can convert and track Amazon and Flipkart links, plus convert links from other stores.',
+  conversion_failed: '⚠️ <b>Link Conversion Failed</b>\n\nI could not create an affiliate link for that store just now. Please try again in a moment.',
 };
 
 const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track that link. Please try again later.';
@@ -691,6 +710,18 @@ function registerHandlers(bot) {
     if (ctx.from && db) {
       upsertUser(ctx.from).catch((err) => console.warn('user upsert failed:', err.message));
     }
+    return next();
+  });
+
+  // GLOBAL: never render a link preview on any outgoing message. Done here once
+  // rather than repeating link_preview_options at every reply call site.
+  bot.use(async (ctx, next) => {
+    const withNoPreview = (fn) => async (first, extra) => {
+      const opts = Object.assign({}, extra || {}, { link_preview_options: { is_disabled: true } });
+      return fn.call(ctx, first, opts);
+    };
+    if (typeof ctx.reply === 'function') ctx.reply = withNoPreview(ctx.reply);
+    if (typeof ctx.replyWithPhoto === 'function') ctx.replyWithPhoto = withNoPreview(ctx.replyWithPhoto);
     return next();
   });
 
@@ -1108,7 +1139,7 @@ function registerHandlers(bot) {
           failed++; // blocked bot, deleted account, etc.
         }
         // Flood control: a small gap between dispatches avoids 429s.
-        await sleep(50);
+        await sleep(BROADCAST_DELAY_MS);
       }
 
       await ctx.reply('✅ <b>Broadcast completed.</b>\n\nSent: ' + sent + '\nFailed: ' + failed, {
@@ -1153,11 +1184,19 @@ function registerHandlers(bot) {
       }
 
       // Other platforms: hand the link back unchanged, no affiliate tag, no tracking.
+      // A store we can CONVERT but not track: a clean, standalone conversion
+      // message — no price-tracking wording mixed in, no raw tracking URL.
       if (result.marketplace === 'other') {
+        const store = storeLabelFromUrl(url);
         await ctx.reply(
-          '🔗 Here is your link:\n\n' +
-            result.affiliateUrl +
-            '\n\nI can track prices for Amazon and Flipkart links only.'
+          '✅ <b>Affiliate Link Converted</b>' +
+            (store ? ' — ' + escapeHtml(store) : '') +
+            '\n\n<a href="' +
+            escapeHtml(result.affiliateUrl) +
+            '">' +
+            escapeHtml(result.affiliateUrl) +
+            '</a>',
+          { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }
         );
         return;
       }

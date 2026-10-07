@@ -479,12 +479,13 @@ async function untrackProduct(docId, from) {
 const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
 
 /**
- * Optional welcome image. Only used when BOT_LOGO_URL is explicitly set to a
- * public image URL — we no longer guess at /logo.jpg, because when Telegram
- * cannot fetch the image it costs a slow failed request on every /start.
+ * The welcome image. Defaults to the bundled public/welcome.jpg served by this
+ * deployment; set BOT_LOGO_URL to use a different image instead.
  */
 function botLogoUrl() {
-  return process.env.BOT_LOGO_URL || null;
+  if (process.env.BOT_LOGO_URL) return process.env.BOT_LOGO_URL;
+  const base = webAppBase();
+  return base ? base + '/welcome.jpg' : null;
 }
 
 /**
@@ -578,15 +579,12 @@ function registerHandlers(bot) {
 
   bot.start(async (ctx) => {
     const caption =
-      '🤖 <b>AI Price Alert Bot</b>\n\n' +
-      '🛒 Track product prices & get instant alerts\n' +
-      '📉 Price drops • 🔔 Smart alerts • ⚡ Real-time updates\n' +
-      '💰 Shop smarter. Save more.\n\n' +
-      'Send me an Amazon or Flipkart product link and I will start tracking its price.\n\n' +
-      '<b>Commands</b>\n' +
-      '/list – your tracked products\n' +
-      '/untrack &lt;id&gt; – stop tracking one\n' +
-      '/help – how it works';
+      '🎉 Great to see you! Welcome!\n\n' +
+      '=> I am the Ai Price Alert Bot. I can track product prices and send you instant alerts.\n\n' +
+      '=> Just send me an Amazon or Flipkart product link, and I will notify you when the price drops.\n\n' +
+      '=> Supported URLs: [ Amazon, Flipkart ]\n\n' +
+      'Save Time! Save Money!!\n\n' +
+      'Click /help to get more help.';
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)],
       [Markup.button.callback('📋 My List', 'mylist')],
@@ -594,10 +592,10 @@ function registerHandlers(bot) {
 
     // Reply FIRST so the welcome is instant; the DB write happens after it.
     try {
-      const logoUrl = botLogoUrl(); // opt-in via BOT_LOGO_URL
+      const logoUrl = botLogoUrl(); // bundled public/welcome.jpg (or BOT_LOGO_URL)
       if (logoUrl && typeof ctx.replyWithPhoto === 'function') {
         try {
-          await withTimeout(ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard }), 6000);
+          await withTimeout(ctx.replyWithPhoto(logoUrl, { caption, parse_mode: 'HTML', ...keyboard }), 5000);
         } catch (err) {
           console.warn('welcome photo failed, falling back to text:', err.message);
           await ctx.reply(caption, { parse_mode: 'HTML', ...keyboard });

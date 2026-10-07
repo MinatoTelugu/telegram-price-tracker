@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-14 (2026-10-07)';
+const BUILD = 'names-15 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -252,6 +252,8 @@ async function findProductByToken(uid, token) {
 }
 
 
+const LIST_DIVIDER = '_______________________________________';
+
 // ---- simple per-user rate limit ------------------------------------------
 // Matches the reference bot's "Too many requests" guard. Set
 // RATE_LIMIT_PER_MINUTE=0 to disable it.
@@ -387,13 +389,21 @@ async function sendTrackingList(ctx) {
       const token = String(rawToken).toUpperCase();
       const base = webAppBase();
 
-      // Airy layout, as in the reference: a blank line between every line.
+      // Exact per-item structure:
+      //   🛍️ <b>N. Title</b>
+      //   🏷️ <i>Store</i>
+      //   (blank)
+      //   🔗 link
+      //   📊 history
+      //   (blank)
+      //   🛑 Click <code>/stop_TOKEN</code> ...
+      //   _______________________________________
+      //   (blank)
       lines.push('🛍️ <b>' + index + '. ' + escapeHtml(title) + '</b>');
       lines.push('🏷️ <i>' + escapeHtml(market) + '</i>');
       lines.push('');
       if (buy) {
         lines.push('🔗 <a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
-        lines.push('');
       }
       if (base) {
         lines.push(
@@ -406,7 +416,8 @@ async function sendTrackingList(ctx) {
       }
       lines.push('');
       lines.push('🛑 Click <code>/stop_' + token + '</code> to stop tracking this product.');
-      // The gap between products — a blank line, no divider.
+      lines.push(LIST_DIVIDER);
+      // The gap before the next product.
       lines.push('');
 
       // Its own buttons, numbered to match the item above. Telegram keyboards

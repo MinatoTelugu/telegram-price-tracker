@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-31 (2026-10-07)';
+const BUILD = 'names-32 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -698,9 +698,38 @@ function registerHandlers(bot) {
     // Fire-and-forget: it must never slow the reply down.
     if (ctx.from && db) {
       upsertUser(ctx.from).catch((err) => console.warn('user upsert failed:', err.message));
+      // And, if a price check is due, run one in the background.
+      maybeRunPriceChecks('update').catch(() => {});
     }
     return next();
   });
+
+  /**
+   * Opportunistic price check. On a host that sleeps, a timer only fires while
+   * the instance is awake — so we ALSO run a check whenever the bot is actually
+   * being used, throttled to PRICE_CHECK_MINUTES (default 30). Fire-and-forget:
+   * it must never slow a reply.
+   */
+  let lastPriceRunAt = 0;
+  let priceRunInFlight = false;
+  async function maybeRunPriceChecks(reason) {
+    const everyMs = Math.max(5, parseInt(process.env.PRICE_CHECK_MINUTES || '30', 10)) * 60 * 1000;
+    if (priceRunInFlight || Date.now() - lastPriceRunAt < everyMs) return;
+    priceRunInFlight = true;
+    lastPriceRunAt = Date.now();
+    try {
+      const cronFn = require('./cron');
+      await cronFn(
+        { method: 'GET', headers: {}, query: {} },
+        { statusCode: 0, setHeader() {}, end() {} }
+      );
+      console.log('price check: opportunistic run complete (' + reason + ')');
+    } catch (err) {
+      console.warn('price check: opportunistic run failed — ' + err.message);
+    } finally {
+      priceRunInFlight = false;
+    }
+  }
 
   // GLOBAL: never render a link preview on any outgoing message. Done here once
   // rather than repeating link_preview_options at every reply call site.
@@ -830,6 +859,36 @@ function registerHandlers(bot) {
           lines.push('saved users (broadcast reach): ' + users.size);
         } catch (e) {
           lines.push('saved users: could not read — ' + escapeHtml(String(e.message).slice(0, 80)));
+        }
+      }
+      // Price-check health: is the loop actually running, and is it succeeding?
+      if (db) {
+        try {
+          const snap = await db.collection(COLLECTIONS.PRODUCTS).limit(50).get();
+          const docs = snap.docs.map((d) => d.data());
+          const withPrice = docs.filter((d) => d.lastPrice != null).length;
+          const withCheck = docs.filter((d) => d.lastCheckedAt).length;
+          let newest = null;
+          for (const d of docs) {
+            const t = tsToDate(d.lastCheckedAt);
+            if (t && (!newest || t > newest)) newest = t;
+          }
+          const errors = {};
+          for (const d of docs) {
+            if (d.lastCheckError) errors[d.lastCheckError] = (errors[d.lastCheckError] || 0) + 1;
+          }
+          lines.push('');
+          lines.push('📉 <b>Price-check health</b>');
+          lines.push('products (first 50): ' + docs.length);
+          lines.push('with a stored price: ' + withPrice);
+          lines.push('ever checked: ' + withCheck);
+          lines.push('last check: ' + (newest ? formatStamp(newest) : 'NEVER'));
+          const errKeys = Object.keys(errors);
+          if (errKeys.length) {
+            lines.push('last-check errors: ' + errKeys.map((k) => k + '×' + errors[k]).join(', '));
+          }
+        } catch (e) {
+          lines.push('price-check health: could not read — ' + escapeHtml(String(e.message).slice(0, 80)));
         }
       }
       lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));

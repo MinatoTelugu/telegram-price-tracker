@@ -41,6 +41,7 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || { PRODUCTS: 'products', PRICE_HIST
 
 const BATCH_SIZE = parseInt(process.env.CRON_BATCH_SIZE || '20', 10);
 const DROP_THRESHOLD = parseFloat(process.env.PRICE_DROP_THRESHOLD_PERCENT || '1');
+const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCENT || '5');
 const HISTORY_DAYS = 30;
 const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
 
@@ -73,14 +74,39 @@ function titleLooksUnusable(title, productId) {
   return false;
 }
 
-function formatAlert(product, oldPrice, newPrice, dropPct) {
-  const name = product.title ? product.title.slice(0, 80) : product.productId;
-  const link = product.affiliateUrl || product.cleanUrl;
+function formatAlert(product, oldPrice, newPrice, pct, kind) {
+  const name = product.title ? String(product.title).slice(0, 80) : product.productId;
+  const link = product.affiliateUrl || product.cleanUrl || '';
+  const tail = link ? '\n\n🔗 ' + link : '';
+
+  if (kind === 'restock') {
+    return '📦 <b>Back in stock!</b>\n\n' + name + (newPrice != null ? '\n\n₹' + newPrice : '') + tail;
+  }
+  if (kind === 'rise') {
+    return (
+      '📈 <b>Price increased</b>\n\n' +
+      name +
+      '\n\n₹' +
+      oldPrice +
+      ' → <b>₹' +
+      newPrice +
+      '</b>  (+' +
+      Math.abs(pct).toFixed(1) +
+      '%)' +
+      tail
+    );
+  }
   return (
     '📉 <b>Price drop!</b>\n\n' +
-    name + '\n\n' +
-    '₹' + oldPrice + ' → <b>₹' + newPrice + '</b>  (−' + dropPct.toFixed(1) + '%)\n\n' +
-    '🔗 ' + link
+    name +
+    '\n\n₹' +
+    oldPrice +
+    ' → <b>₹' +
+    newPrice +
+    '</b>  (−' +
+    Math.abs(pct).toFixed(1) +
+    '%)' +
+    tail
   );
 }
 
@@ -160,23 +186,41 @@ async function processProduct(doc) {
     if (title && !titleLooksUnusable(title, data.productId)) update.title = title;
   }
   if (!data.imageUrl && result.imageUrl) update.imageUrl = result.imageUrl;
+  // Remember stock state so we can alert on the out-of-stock -> in-stock change.
+  if (typeof result.inStock === 'boolean') update.inStock = result.inStock;
   // Cache the canonical URL we resolved, so future runs skip the resolution.
   if (result.resolvedUrl && result.resolvedUrl !== data.fetchUrl) update.fetchUrl = result.resolvedUrl;
   await doc.ref.set(update, { merge: true });
 
   await pruneOldHistory(doc.ref);
 
-  // Price-drop alert.
+  // Alerts: price drops, price increases, and back-in-stock.
   let alerted = 0;
-  if (oldPrice != null && newPrice < oldPrice) {
-    const dropPct = ((oldPrice - newPrice) / oldPrice) * 100;
-    if (dropPct >= DROP_THRESHOLD) {
-      const subscribers = Array.isArray(data.subscribers) ? data.subscribers : [];
-      const message = formatAlert({ ...data, title: title || data.title || result.title }, oldPrice, newPrice, dropPct);
-      for (const chatId of subscribers) {
-        const sent = await sendTelegramMessage(chatId, message);
-        if (sent) alerted++;
-      }
+  const subscribers = Array.isArray(data.subscribers) ? data.subscribers : [];
+  const alertProduct = { ...data, title: title || data.title || result.title };
+
+  const pct =
+    oldPrice != null && newPrice != null && oldPrice > 0 && newPrice !== oldPrice
+      ? ((newPrice - oldPrice) / oldPrice) * 100
+      : null;
+
+  let message = null;
+  if (pct != null && pct <= -DROP_THRESHOLD) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'drop');
+  } else if (pct != null && pct >= INCREASE_THRESHOLD) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise');
+  }
+
+  // Only on the TRANSITION, so we don't repeat it every run.
+  const wasOutOfStock = data.inStock === false;
+  if (wasOutOfStock && result.inStock === true) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'restock');
+  }
+
+  if (message) {
+    for (const chatId of subscribers) {
+      const sent = await sendTelegramMessage(chatId, message);
+      if (sent) alerted++;
     }
   }
 

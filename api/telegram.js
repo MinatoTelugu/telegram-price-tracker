@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-8 (2026-10-07)';
+const BUILD = 'names-9 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -524,19 +524,32 @@ function botLogoUrl() {
  */
 function buildTrackKeyboard(docId, result) {
   const buyUrl = result && (result.affiliateUrl || result.cleanUrl);
-  const base = webAppBase();
-  const historyUrl = base ? base + '/?id=' + encodeURIComponent(docId) : null;
 
   const row1 = [];
   if (buyUrl) row1.push(Markup.button.url('✅ Buy Now', buyUrl));
   row1.push(Markup.button.callback('🔴 Stop Tracking', 'untrack:' + docId));
 
   const row2 = [];
-  if (historyUrl) row2.push(Markup.button.url('📊 Price History', historyUrl));
+  // A callback (not a URL button) so the price log is posted right in the chat;
+  // the log itself carries a button through to the full chart.
+  row2.push(Markup.button.callback('📊 Price History', 'history:' + docId));
   row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
   const rows = [row1, row2];
   return Markup.inlineKeyboard(rows);
+}
+
+/** Firestore Timestamp | Date | seconds -> Date (or null). */
+function tsToDate(ts) {
+  try {
+    if (!ts) return null;
+    if (typeof ts.toDate === 'function') return ts.toDate();
+    if (typeof ts.seconds === 'number') return new Date(ts.seconds * 1000);
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  } catch (err) {
+    return null;
+  }
 }
 
 /** Set HIDE_TAG_WARNING=true to suppress the "no affiliate tag" note. */
@@ -867,6 +880,69 @@ function registerHandlers(bot) {
       });
     } catch (err) {
       console.error('remove handler failed', err);
+    }
+  });
+
+  // Price History: post a TEXT LOG of the recent prices in the chat, with a
+  // button through to the full chart page.
+  bot.action(/^history:(.+)$/, async (ctx) => {
+    try {
+      if (typeof ctx.answerCbQuery === 'function') {
+        try {
+          await ctx.answerCbQuery();
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+      const docId = String(ctx.match[1]);
+      const doc = await db.collection(COLLECTIONS.PRODUCTS).doc(docId).get();
+      if (!doc.exists) {
+        await ctx.reply('I could not find that product.');
+        return;
+      }
+      const d = doc.data();
+      const name = d.title || d.productId || docId;
+
+      const snap = await doc.ref
+        .collection(COLLECTIONS.PRICE_HISTORY)
+        .orderBy('checkedAt', 'desc')
+        .limit(15)
+        .get();
+      const points = snap.docs.map((x) => x.data()).filter((p) => p && p.price != null);
+
+      const lines = ['📊 <b>' + escapeHtml(name) + '</b>', ''];
+      if (!points.length) {
+        lines.push('No price points recorded yet — check back after the next scheduled run.');
+      } else {
+        const prices = points.map((p) => Number(p.price));
+        lines.push('🕒 <b>Recent prices</b>');
+        for (const p of points) {
+          const when = tsToDate(p.checkedAt);
+          lines.push('• ' + (when ? formatStamp(when) : '—') + ' — ₹' + Number(p.price).toLocaleString('en-IN'));
+        }
+        lines.push('');
+        lines.push(
+          '📉 Lowest ₹' +
+            Math.min(...prices).toLocaleString('en-IN') +
+            '   📈 Highest ₹' +
+            Math.max(...prices).toLocaleString('en-IN')
+        );
+      }
+
+      const base = webAppBase();
+      const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
+      if (base) {
+        opts.reply_markup = Markup.inlineKeyboard([
+          [Markup.button.url('📈 Open full chart', base + '/?id=' + encodeURIComponent(docId))],
+        ]);
+      }
+      await ctx.reply(lines.join('\n'), opts);
+    } catch (err) {
+      console.error('history handler failed', err);
     }
   });
 

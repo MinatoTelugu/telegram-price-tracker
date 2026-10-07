@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-23 (2026-10-07)';
+const BUILD = 'names-24 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -1098,12 +1098,17 @@ function registerHandlers(bot) {
       }
 
       const raw = String((ctx.message && ctx.message.text) || '');
-      let text = raw.replace(/^\/broadcast(@\w+)?\s*/i, '').trim();
-      if (!text && ctx.message && ctx.message.reply_to_message) {
-        const r = ctx.message.reply_to_message;
-        text = String(r.text || r.caption || '').trim();
-      }
-      if (!text) {
+      const inlineText = raw.replace(/^\/broadcast(@\w+)?\s*/i, '').trim();
+      const replied = ctx.message && ctx.message.reply_to_message ? ctx.message.reply_to_message : null;
+
+      // If the admin REPLIED to a post, we copy that message verbatim — so a
+      // photo, its caption, and any bold/italic formatting come through exactly.
+      // For inline text there is no source message worth copying (it would
+      // include the "/broadcast" command itself), so we send the text.
+      const useCopy = Boolean(replied);
+      const text = inlineText;
+
+      if (!useCopy && !text) {
         await ctx.reply(
           'Usage: <code>/broadcast &lt;text&gt;</code> — or reply to a message with /broadcast.',
           { parse_mode: 'HTML' }
@@ -1119,10 +1124,15 @@ function registerHandlers(bot) {
       for (const doc of snap.docs) {
         const chatId = doc.id;
         try {
-          await ctx.telegram.sendMessage(chatId, text, {
-            parse_mode: 'HTML',
-            link_preview_options: { is_disabled: true },
-          });
+          if (useCopy) {
+            // Copies the WHOLE message: photo/video, caption, entities, links.
+            await ctx.telegram.copyMessage(chatId, ctx.chat.id, replied.message_id);
+          } else {
+            await ctx.telegram.sendMessage(chatId, text, {
+              parse_mode: 'HTML',
+              link_preview_options: { is_disabled: true },
+            });
+          }
           sent++;
         } catch (err) {
           failed++; // blocked bot, deleted account, etc.

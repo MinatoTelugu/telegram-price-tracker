@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-20 (2026-10-07)';
+const BUILD = 'names-21 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -251,6 +251,8 @@ async function findProductByToken(uid, token) {
   return null;
 }
 
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const LIST_DIVIDER = '____________________________________';
 
@@ -684,6 +686,11 @@ function registerHandlers(bot) {
     } catch (err) {
       /* never block on the limiter itself */
     }
+    // Save/update the user on EVERY interaction, so /broadcast can reach them.
+    // Fire-and-forget: it must never slow the reply down.
+    if (ctx.from && db) {
+      upsertUser(ctx.from).catch((err) => console.warn('user upsert failed:', err.message));
+    }
     return next();
   });
 
@@ -790,6 +797,14 @@ function registerHandlers(bot) {
         'TELEGRAM_CHANNEL_ID: ' +
           (process.env.TELEGRAM_CHANNEL_ID || process.env.DEALS_CHANNEL_ID || '(default)')
       );
+      if (db) {
+        try {
+          const users = await db.collection(COLLECTIONS.USERS).get();
+          lines.push('saved users (broadcast reach): ' + users.size);
+        } catch (e) {
+          lines.push('saved users: could not read — ' + escapeHtml(String(e.message).slice(0, 80)));
+        }
+      }
       lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));
       if (fbError) lines.push('firebase load error: <code>' + escapeHtml(String(fbError).slice(0, 220)) + '</code>');
 
@@ -1048,6 +1063,66 @@ function registerHandlers(bot) {
       console.error('price history failed', err);
     }
   }
+
+  // /broadcast — ADMIN ONLY, and silent for everyone else.
+  //   /broadcast <text>            send that text to every saved user
+  //   reply to a message + /broadcast   send that message's text
+  bot.command('broadcast', async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      const adminId = await resolveAdminId(ctx);
+      if (!adminId || String(ctx.from.id) !== String(adminId)) return; // invisible to others
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+
+      const raw = String((ctx.message && ctx.message.text) || '');
+      let text = raw.replace(/^\/broadcast(@\w+)?\s*/i, '').trim();
+      if (!text && ctx.message && ctx.message.reply_to_message) {
+        const r = ctx.message.reply_to_message;
+        text = String(r.text || r.caption || '').trim();
+      }
+      if (!text) {
+        await ctx.reply(
+          'Usage: <code>/broadcast &lt;text&gt;</code> — or reply to a message with /broadcast.',
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      await ctx.reply('📣 Broadcasting to all users…');
+
+      const snap = await db.collection(COLLECTIONS.USERS).get();
+      let sent = 0;
+      let failed = 0;
+      for (const doc of snap.docs) {
+        const chatId = doc.id;
+        try {
+          await ctx.telegram.sendMessage(chatId, text, {
+            parse_mode: 'HTML',
+            link_preview_options: { is_disabled: true },
+          });
+          sent++;
+        } catch (err) {
+          failed++; // blocked bot, deleted account, etc.
+        }
+        // Flood control: a small gap between dispatches avoids 429s.
+        await sleep(50);
+      }
+
+      await ctx.reply('✅ <b>Broadcast completed.</b>\n\nSent: ' + sent + '\nFailed: ' + failed, {
+        parse_mode: 'HTML',
+      });
+    } catch (err) {
+      console.error('broadcast failed:', err);
+      try {
+        await ctx.reply('Broadcast failed: ' + String(err.message).slice(0, 200));
+      } catch (e) {
+        /* nothing more we can do */
+      }
+    }
+  });
 
   bot.on('text', async (ctx) => {
     try {

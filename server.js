@@ -213,6 +213,40 @@ let bot = null;
  * the bot is also live on Vercel) — we log it clearly and try again rather than
  * dying and triggering a restart loop.
  */
+/**
+ * Open connections to the hosts we rely on, in the background. Cheap, and it
+ * removes DNS + TLS setup from the first real request after a cold start.
+ */
+async function warmUp() {
+  const { httpsAgent } = require('./lib/httpAgent');
+  const https = require('https');
+
+  const targets = ['https://www.flipkart.com/', 'https://api.telegram.org/'];
+  if (process.env.WEB_APP_URL) targets.push(process.env.WEB_APP_URL);
+  if (process.env.CUELINKS_API_URL) targets.push(process.env.CUELINKS_API_URL);
+  if (process.env.AFFILIATERS_CONVERTER_URL) targets.push(process.env.AFFILIATERS_CONVERTER_URL);
+
+  await Promise.all(
+    targets.map(
+      (url) =>
+        new Promise((resolve) => {
+          try {
+            const req = https.request(url, { method: 'HEAD', timeout: 5000, agent: httpsAgent }, () => resolve());
+            req.on('error', () => resolve());
+            req.on('timeout', () => {
+              req.destroy();
+              resolve();
+            });
+            req.end();
+          } catch (err) {
+            resolve();
+          }
+        })
+    )
+  );
+  console.log('Warm-up complete for', targets.length, 'hosts');
+}
+
 async function startPolling() {
   // Never allow two pollers inside one process: a retry must stop the previous
   // one first, otherwise the bot fights itself and Telegram returns 409 forever.
@@ -234,6 +268,11 @@ async function startPolling() {
   } catch (err) {
     console.warn('deleteWebhook failed (continuing):', err.message);
   }
+
+  // Warm the connections we depend on, so the FIRST user request after a start
+  // does not pay DNS + TLS for every host. A scale-to-zero host that has just
+  // woken up is the main reason a reply can feel slow.
+  warmUp().catch((err) => console.warn('warm-up failed:', err.message));
 
   console.log('Starting Telegram polling...');
   try {

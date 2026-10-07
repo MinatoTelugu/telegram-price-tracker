@@ -214,6 +214,17 @@ let bot = null;
  * dying and triggering a restart loop.
  */
 async function startPolling() {
+  // Never allow two pollers inside one process: a retry must stop the previous
+  // one first, otherwise the bot fights itself and Telegram returns 409 forever.
+  if (bot) {
+    try {
+      bot.stop('restart');
+    } catch (err) {
+      /* ignore */
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
   bot = new Telegraf(token);
   telegramFn._internals.registerHandlers(bot);
 
@@ -233,13 +244,16 @@ async function startPolling() {
     if (/409|Conflict/i.test(msg)) {
       console.error(
         'Polling conflict: ANOTHER copy of this bot is polling with the same token. ' +
-          'Run exactly ONE instance of this service, and make sure the bot is not also ' +
-          'running on Vercel. Retrying in 30 seconds...'
+          'Set this service to exactly ONE instance, and make sure there is no second ' +
+          'deployment of it. Retrying in 60 seconds...'
       );
-    } else {
-      console.error('Polling failed:', msg);
-      console.error('Retrying in 30 seconds...');
+      setTimeout(() => {
+        startPolling().catch((e) => console.error('retry failed:', e.message));
+      }, 60000);
+      return;
     }
+    console.error('Polling failed:', msg);
+    console.error('Retrying in 30 seconds...');
     setTimeout(() => {
       startPolling().catch((e) => console.error('retry failed:', e.message));
     }, 30000);

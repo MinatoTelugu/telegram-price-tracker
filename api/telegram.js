@@ -188,6 +188,46 @@ async function resolveAdminId(ctx) {
   }
 }
 
+/**
+ * Find a product from a /stop_<token> or /remove_<token> command.
+ *
+ * The displayed token is DERIVED from the doc id when the doc has no stored
+ * stopToken (products tracked before tokens existed), so a plain database
+ * lookup would miss those. We therefore fall back to comparing the derived
+ * token across the user's own products.
+ */
+async function findProductByToken(uid, token) {
+  const wanted = String(token || '').toLowerCase();
+  if (!wanted) return null;
+
+  // 1) fast path: a stored token.
+  try {
+    const snap = await db.collection(COLLECTIONS.PRODUCTS).where('stopToken', '==', wanted).limit(1).get();
+    if (!snap.empty) return snap.docs[0];
+  } catch (err) {
+    console.warn('stopToken lookup failed:', err.message);
+  }
+
+  // 2) slow path: walk this user's products and compare derived tokens.
+  const scans = [
+    db.collection(COLLECTIONS.PRODUCTS).where('subscribers', 'array-contains', uid).limit(50),
+    db.collection(COLLECTIONS.PRODUCTS).where('stoppedBy', 'array-contains', uid).limit(50),
+  ];
+  for (const q of scans) {
+    try {
+      const snap = await q.get();
+      for (const doc of snap.docs) {
+        const stored = String((doc.data() || {}).stopToken || '').toLowerCase();
+        if (stored && stored === wanted) return doc;
+        if (stopTokenFor(doc.id).toLowerCase() === wanted) return doc;
+      }
+    } catch (err) {
+      console.warn('token scan failed:', err.message);
+    }
+  }
+  return null;
+}
+
 const LIST_DIVIDER = '_______________________________________';
 
 // ---- simple per-user rate limit ------------------------------------------
@@ -292,7 +332,17 @@ async function sendTrackingList(ctx) {
     for (const it of items) {
       index++;
       const d = it.data;
-      const token = (d.stopToken || stopTokenFor(it.doc.id)).toUpperCase();
+      const rawToken = d.stopToken || stopTokenFor(it.doc.id);
+      const token = String(rawToken).toUpperCase();
+      // Persist the token for products tracked before tokens existed, so the
+      // /stop_ lookup works next time.
+      if (!d.stopToken && it.doc.ref) {
+        try {
+          await it.doc.ref.set({ stopToken: String(rawToken).toLowerCase() }, { merge: true });
+        } catch (e) {
+          /* non-fatal */
+        }
+      }
       const title =
         (!isPlaceholderTitle(d.title, d.productId) ? d.title : null) ||
         titleFromUrl(d.resolvedUrl || d.cleanUrl || d.affiliateUrl || '') ||
@@ -727,16 +777,11 @@ function registerHandlers(bot) {
         return;
       }
       const token = String(ctx.match[1]).toLowerCase();
-      const snap = await db
-        .collection(COLLECTIONS.PRODUCTS)
-        .where('stopToken', '==', token)
-        .limit(1)
-        .get();
-      if (snap.empty) {
+      const doc = await findProductByToken(String(ctx.from.id), token);
+      if (!doc) {
         await ctx.reply('I could not find that product. Send /list to see your tracking list.');
         return;
       }
-      const doc = snap.docs[0];
       const d = doc.data();
       await untrackProduct(doc.id, ctx.from);
       await ctx.reply('🛑 Stopped tracking <b>' + escapeHtml(d.title || d.productId || doc.id) + '</b>.', {
@@ -756,12 +801,11 @@ function registerHandlers(bot) {
         return;
       }
       const token = String(ctx.match[1]).toLowerCase();
-      const snap = await db.collection(COLLECTIONS.PRODUCTS).where('stopToken', '==', token).limit(1).get();
-      if (snap.empty) {
+      const doc = await findProductByToken(String(ctx.from.id), token);
+      if (!doc) {
         await ctx.reply('I could not find that product.');
         return;
       }
-      const doc = snap.docs[0];
       const d = doc.data();
       await doc.ref.set(
         {

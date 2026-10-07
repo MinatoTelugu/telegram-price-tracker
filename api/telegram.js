@@ -78,13 +78,36 @@ function webAppBase() {
   }
 }
 
-/** Turn a URL slug like "apple-iphone-15-blue-128-gb" into "Apple Iphone 15 Blue 128 Gb". */
+/** Units that should stay uppercase in a product name ("128 GB", not "Gb"). */
+const UPPERCASE_UNITS = new Set(['gb', 'tb', 'mb', 'kb', 'mm', 'cm', 'kg', 'ml', 'lt', 'hz', 'mah']);
+
+/** Brand spellings that a naive title-case would get wrong. */
+const BRAND_FIXES = {
+  iphone: 'iPhone',
+  ipad: 'iPad',
+  airpods: 'AirPods',
+  macbook: 'MacBook',
+  oneplus: 'OnePlus',
+  realme: 'realme',
+  redmi: 'Redmi',
+  poco: 'POCO',
+};
+
+/** Turn a URL slug like "apple-iphone-15-blue-128-gb" into "Apple iPhone 15 Blue 128 GB". */
 function prettifySlug(slug) {
   const s = decodeURIComponent(String(slug)).replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
   if (s.length < 3) return null;
   return s
     .split(' ')
-    .map((w) => (/^[A-Z0-9]+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .map((w) => {
+      const lower = w.toLowerCase();
+      if (BRAND_FIXES[lower]) return BRAND_FIXES[lower];
+      if (UPPERCASE_UNITS.has(lower)) return lower.toUpperCase();
+      // "5g" -> "5G", "128gb" -> "128GB"
+      const m = w.match(/^(\d+)([a-z]{1,3})$/i);
+      if (m) return m[1] + m[2].toUpperCase();
+      return /^[A-Z0-9]+$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1);
+    })
     .join(' ');
 }
 

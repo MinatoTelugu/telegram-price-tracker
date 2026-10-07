@@ -262,6 +262,32 @@ async function startPolling() {
   });
 
   console.log('Scheduled: price checks "' + priceCron + '", deals "' + dealsCron + '"');
+
+  // Also run once shortly after startup. A restart resets the schedule, so
+  // without this the first price check could be hours away and the price
+  // history page would look empty.
+  setTimeout(() => {
+    runJob('cron').catch((err) => console.error('startup price check failed:', err.message));
+  }, 60 * 1000);
+  setTimeout(() => {
+    runJob('deals').catch((err) => console.error('startup deals failed:', err.message));
+  }, 150 * 1000);
+
+  // Watchdog: keep the bot reachable even if the Telegram connection drops.
+  setInterval(async () => {
+    if (!bot) return;
+    try {
+      await bot.telegram.getMe();
+    } catch (err) {
+      console.error('watchdog: Telegram unreachable (' + err.message + '), restarting polling...');
+      try {
+        bot.stop('watchdog');
+      } catch (e) {
+        /* ignore */
+      }
+      startPolling().catch((e) => console.error('watchdog restart failed:', e.message));
+    }
+  }, 5 * 60 * 1000);
 })();
 
 function shutdown(signal) {
@@ -277,7 +303,12 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-// Never die from an unhandled rejection — log it and keep running.
+// Never die from an unhandled rejection or a stray exception — log it and keep
+// running, so the bot stays up instead of dropping offline.
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection (continuing):', (err && err.message) || err);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (continuing):', (err && err.stack) || err);
 });

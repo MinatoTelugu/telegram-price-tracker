@@ -23,7 +23,7 @@
  */
 
 const axios = require('axios');
-const { fetchProduct } = require('../lib/scraper');
+const { fetchProduct, resolveProductName } = require('../lib/scraper');
 
 // Load Firebase defensively: missing credentials must not crash the process
 // (on Koyeb a throw here would kill the whole app at startup).
@@ -60,6 +60,17 @@ async function sendTelegramMessage(chatId, text) {
     console.error('sendMessage failed for', chatId, err.message);
     return false;
   }
+}
+
+/** True when a stored title is missing, a placeholder, or a raw product id. */
+function titleLooksUnusable(title, productId) {
+  const s = String(title || '').trim();
+  if (!s) return true;
+  if (productId && s.toLowerCase() === String(productId).toLowerCase()) return true;
+  if (s.length < 4) return true;
+  // id-like: no spaces, letters and digits only (e.g. ucc25298ca0, B0DFHCZMWY)
+  if (!/\s/.test(s) && /^[A-Za-z0-9]{10,}$/.test(s)) return true;
+  return false;
 }
 
 function formatAlert(product, oldPrice, newPrice, dropPct) {
@@ -126,7 +137,28 @@ async function processProduct(doc) {
     lastCheckError: null,
     updatedAt: FieldValue.serverTimestamp(),
   };
-  if (!data.title && result.title) update.title = result.title;
+  // Name: keep a real stored title, but replace an id-like/placeholder value
+  // with the real product name — resolving it if the page scrape gave none.
+  let title = data.title;
+  if (titleLooksUnusable(title, data.productId)) {
+    if (!titleLooksUnusable(result.title, data.productId)) {
+      title = result.title;
+    } else {
+      try {
+        const r = await resolveProductName({
+          marketplace: data.marketplace,
+          productId: data.productId,
+          cleanUrl: data.cleanUrl,
+          affiliateUrl: data.affiliateUrl,
+          resolvedUrl: data.resolvedUrl || data.fetchUrl,
+        });
+        if (r && r.title) title = r.title;
+      } catch (err) {
+        console.warn('cron name resolution failed for', doc.id, err.message);
+      }
+    }
+    if (title && !titleLooksUnusable(title, data.productId)) update.title = title;
+  }
   if (!data.imageUrl && result.imageUrl) update.imageUrl = result.imageUrl;
   // Cache the canonical URL we resolved, so future runs skip the resolution.
   if (result.resolvedUrl && result.resolvedUrl !== data.fetchUrl) update.fetchUrl = result.resolvedUrl;
@@ -140,7 +172,7 @@ async function processProduct(doc) {
     const dropPct = ((oldPrice - newPrice) / oldPrice) * 100;
     if (dropPct >= DROP_THRESHOLD) {
       const subscribers = Array.isArray(data.subscribers) ? data.subscribers : [];
-      const message = formatAlert({ ...data, title: data.title || result.title }, oldPrice, newPrice, dropPct);
+      const message = formatAlert({ ...data, title: title || data.title || result.title }, oldPrice, newPrice, dropPct);
       for (const chatId of subscribers) {
         const sent = await sendTelegramMessage(chatId, message);
         if (sent) alerted++;

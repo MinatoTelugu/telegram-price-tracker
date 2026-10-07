@@ -427,6 +427,7 @@ async function trackProduct(result, from, info) {
   };
 
   if (result.resolvedUrl) data.resolvedUrl = result.resolvedUrl;
+  if (extra.resolvedUrl) data.resolvedUrl = extra.resolvedUrl;
   if (extra.title) data.title = extra.title;
   if (extra.imageUrl) data.imageUrl = extra.imageUrl;
   if (extra.price != null) {
@@ -880,7 +881,7 @@ function registerHandlers(bot) {
       };
       try {
         const scraped = await withTimeout(
-          fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
+          fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace),
           4000
         );
         if (scraped) {
@@ -893,6 +894,31 @@ function registerHandlers(bot) {
         }
       } catch (err) {
         console.warn('track-time scrape failed:', err.message);
+      }
+
+      // Still no real name? Resolve it the hard way: follow the link (including
+      // the converted affiliate link), then read og:title / <title>. This is
+      // what turns a raw id into an actual product name.
+      if (isPlaceholderTitle(info.title, result.productId)) {
+        try {
+          const resolved = await withTimeout(
+            resolveProductName({
+              marketplace: result.marketplace,
+              productId: result.productId,
+              cleanUrl: result.cleanUrl,
+              affiliateUrl: result.affiliateUrl,
+              resolvedUrl: result.resolvedUrl,
+            }),
+            8000
+          );
+          const name = (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
+          if (name && !isPlaceholderTitle(name, result.productId)) {
+            info.title = name;
+            if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
+          }
+        } catch (err) {
+          console.warn('track-time name resolution failed:', err.message);
+        }
       }
 
       const docId = await trackProduct(result, ctx.from, info);

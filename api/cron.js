@@ -137,8 +137,14 @@ async function pruneOldHistory(docRef) {
 
 async function processProduct(doc) {
   const data = doc.data();
-  // fetchUrl caches the resolved canonical URL (set on a previous run).
-  const url = data.fetchUrl || data.cleanUrl || data.affiliateUrl;
+  // Pick the best URL to fetch. fetchUrl caches a canonical URL resolved on an
+  // earlier run. Failing that, a dl.flipkart.com / fktr.it SHARE link is a dead
+  // end from this host (it drops the connection), so prefer the converter's
+  // redirector — following it lands on the real product page, which is what we
+  // actually want to read.
+  const storedUrl = data.fetchUrl || data.cleanUrl || data.affiliateUrl;
+  const isDeadShortLink = /(^|\.)dl\.flipkart\.com|fkrt\.it/i.test(String(storedUrl || ''));
+  const url = isDeadShortLink && data.affiliateUrl ? data.affiliateUrl : storedUrl;
   const now = new Date();
 
   const result = await fetchProduct(url, data.marketplace);
@@ -149,7 +155,8 @@ async function processProduct(doc) {
       { lastCheckedAt: FieldValue.serverTimestamp(), lastCheckError: result.reason },
       { merge: true }
     );
-    return { id: doc.id, status: 'skipped', reason: result.reason, httpStatus: result.status || null, snippet: result.snippet || null };
+    console.warn('cron: ' + doc.id + ' skipped (' + result.reason + ') fetching ' + String(url).slice(0, 90));
+    return { id: doc.id, status: 'skipped', reason: result.reason, url: String(url).slice(0, 120), httpStatus: result.status || null, snippet: result.snippet || null };
   }
 
   const oldPrice = typeof data.lastPrice === 'number' ? data.lastPrice : null;

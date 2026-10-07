@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-9 (2026-10-07)';
+const BUILD = 'names-10 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -350,15 +350,14 @@ async function sendTrackingList(ctx) {
       }
     }
 
-    const lines = [];
+    const lines = ['📋 <b>Your tracked products</b> (' + items.length + ')', ''];
+    const buttonRows = [];
     let index = 0;
     for (const it of items) {
       index++;
       const d = it.data;
       const rawToken = d.stopToken || stopTokenFor(it.doc.id);
-      const token = String(rawToken).toUpperCase();
-      // Persist the token for products tracked before tokens existed, so the
-      // /stop_ lookup works next time.
+      // Persist the token for products tracked before tokens existed.
       if (!d.stopToken && it.doc.ref) {
         try {
           await it.doc.ref.set({ stopToken: String(rawToken).toLowerCase() }, { merge: true });
@@ -366,30 +365,36 @@ async function sendTrackingList(ctx) {
           /* non-fatal */
         }
       }
+      const storedTitle = isPlaceholderTitle(d.title, d.productId) ? null : d.title;
       const title =
-        (!isPlaceholderTitle(d.title, d.productId) ? d.title : null) ||
+        cleanProductTitle(storedTitle) ||
         titleFromUrl(d.resolvedUrl || d.cleanUrl || d.affiliateUrl || '') ||
         d.productId ||
         it.doc.id;
-      const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
-      const buy = d.affiliateUrl || d.cleanUrl;
-      const buyLink = buy;
-      const base = webAppBase();
-      const hist = base ? base + '/?id=' + encodeURIComponent(it.doc.id) : null;
+      const market =
+        d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
+      const price = d.lastPrice != null ? '₹' + Number(d.lastPrice).toLocaleString('en-IN') : null;
+      const meta = [price, market].filter(Boolean).join(' · ');
 
-      lines.push(index + '. <b>' + escapeHtml(title) + '</b>');
-      lines.push('');
-      if (buyLink) lines.push('<a href="' + escapeHtml(buyLink) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
-      lines.push('');
-      if (hist) lines.push('<a href="' + escapeHtml(hist) + '">[ View Price History! ]</a>');
-      lines.push('');
-      lines.push('Click /stop_' + token + ' to stop this product.');
-      lines.push(LIST_DIVIDER);
+      // Two compact lines per product — no link lines, no /stop_ text.
+      lines.push('<b>' + index + '.</b> ' + escapeHtml(title));
+      if (meta) lines.push('     ' + escapeHtml(meta));
+
+      // Its own buttons, numbered to match the item above. Telegram keyboards
+      // attach to a message, so numbering is how we tie a button to its item.
+      if (buttonRows.length < 10) {
+        buttonRows.push([
+          Markup.button.callback('❌ Stop ' + index, 'untrack:' + it.doc.id),
+          Markup.button.callback('📊 History ' + index, 'history:' + it.doc.id),
+        ]);
+      }
     }
     lines.push('');
     lines.push('🦋 <b>Total Products: ' + items.length + '</b>');
 
-    await ctx.reply(lines.join('\n'), { parse_mode: 'HTML', disable_web_page_preview: true });
+    const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
+    if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
+    await ctx.reply(lines.join('\n'), opts);
   } catch (err) {
     console.error('sendTrackingList failed', err);
   }
@@ -550,6 +555,24 @@ function tsToDate(ts) {
   } catch (err) {
     return null;
   }
+}
+
+/**
+ * Store cards truncate long names mid-word and append "...more" (Flipkart).
+ * Strip that so the name reads cleanly, and drop the half-word it cut off.
+ */
+function cleanProductTitle(title) {
+  let t = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const wasTruncated = /\s*[.…]{2,}\s*more$/i.test(t);
+  t = t.replace(/\s*[.…]{2,}\s*more$/i, '').trim();
+  t = t.replace(/\s*[.…]{2,}$/i, '').trim();
+  if (wasTruncated) {
+    // "…Smart WebOS TV 2" -> "…Smart WebOS TV" (the "2" was cut off)
+    const m = t.match(/^(.*?)\s+([A-Za-z0-9]{1,2})$/);
+    if (m && !UPPERCASE_UNITS.has(m[2].toLowerCase())) t = m[1].trim();
+  }
+  return t || null;
 }
 
 /** Set HIDE_TAG_WARNING=true to suppress the "no affiliate tag" note. */

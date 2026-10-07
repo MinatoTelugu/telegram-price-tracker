@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-18 (2026-10-07)';
+const BUILD = 'names-19 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -326,7 +326,7 @@ async function sendTrackingList(ctx) {
               affiliateUrl: it.data.affiliateUrl,
               resolvedUrl: it.data.resolvedUrl,
             }),
-            5000
+            2500
           );
           if (r && r.resolvedUrl) it.data.resolvedUrl = r.resolvedUrl;
           got = (r && r.title) || titleFromUrl((r && r.resolvedUrl) || '') || null;
@@ -1097,68 +1097,71 @@ function registerHandlers(bot) {
         currency: 'INR',
         imageUrl: null,
       };
-      try {
-        const scraped = await withTimeout(
-          fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace),
-          4000
-        );
-        if (scraped) {
-          info = {
-            title: scraped.title || info.title || titleFromUrl(scraped.resolvedUrl || '') || null,
-            price: scraped.ok ? scraped.price : null,
-            currency: scraped.currency || 'INR',
-            imageUrl: scraped.imageUrl || null,
-            inStock: typeof scraped.inStock === 'boolean' ? scraped.inStock : null,
-          };
-        }
-      } catch (err) {
-        console.warn('track-time scrape failed:', err.message);
+
+      const needsName = () => isPlaceholderTitle(info.title, result.productId);
+      const canUseConverterLink =
+        needsName() && result.affiliateUrl && result.affiliateUrl !== result.cleanUrl;
+
+      // SPEED: the page scrape and the converter-link resolution are independent
+      // network calls, so run them CONCURRENTLY. Sequentially the worst case was
+      // 2.5s + 4s + 4s; run together it is a single 4s budget.
+      const [scraped, viaConverter] = await Promise.all([
+        withTimeout(fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace), 2500).catch(
+          (err) => {
+            console.warn('track-time scrape failed:', err.message);
+            return null;
+          }
+        ),
+        canUseConverterLink
+          ? withTimeout(resolveShortUrl(result.affiliateUrl), 4000).catch((err) => {
+              console.warn('converter-link resolution failed:', err.message);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
+
+      if (scraped) {
+        info = {
+          title: scraped.title || info.title || titleFromUrl(scraped.resolvedUrl || '') || null,
+          price: scraped.ok ? scraped.price : null,
+          currency: scraped.currency || 'INR',
+          imageUrl: scraped.imageUrl || null,
+          inStock: typeof scraped.inStock === 'boolean' ? scraped.inStock : null,
+        };
       }
 
-      // Still no real name? Resolve it the hard way: follow the link (including
-      // the converted affiliate link), then read og:title / <title>. This is
-      // what turns a raw id into an actual product name.
-      if (isPlaceholderTitle(info.title, result.productId)) {
-        // FIRST, follow the converter's own link (ekaro.in / earnkaro.com). It
-        // redirects to the real product page, so its redirect chain reveals the
-        // canonical store URL — and therefore the product name from the slug —
-        // WITHOUT fetching the store itself, which drops connections from this
-        // host (Koyeb's datacenter IP).
-        if (result.affiliateUrl && result.affiliateUrl !== result.cleanUrl) {
-          try {
-            const finalUrl = await withTimeout(resolveShortUrl(result.affiliateUrl), 8000);
-            const fromLink = titleFromUrl(finalUrl || '');
-            if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
-              info.title = fromLink;
-              info.resolvedUrl = finalUrl;
-            }
-          } catch (err) {
-            console.warn('converter-link resolution failed:', err.message);
-          }
+      // The converter's link redirects to the real product page, so its chain
+      // reveals the canonical store URL — and the name from its slug — WITHOUT
+      // fetching the store itself.
+      if (viaConverter) {
+        const fromLink = titleFromUrl(viaConverter);
+        if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
+          info.title = fromLink;
+          info.resolvedUrl = viaConverter;
         }
+      }
 
-        // Still nothing? Resolve it the hard way: follow the link, read og:title.
-        if (isPlaceholderTitle(info.title, result.productId)) {
-          try {
-            const resolved = await withTimeout(
-              resolveProductName({
-                marketplace: result.marketplace,
-                productId: result.productId,
-                cleanUrl: result.cleanUrl,
-                affiliateUrl: result.affiliateUrl,
-                resolvedUrl: result.resolvedUrl,
-              }),
-              8000
-            );
-            const name =
-              (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
-            if (name && !isPlaceholderTitle(name, result.productId)) {
-              info.title = name;
-              if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
-            }
-          } catch (err) {
-            console.warn('track-time name resolution failed:', err.message);
+      // Still no real name? One more pass: read og:title from the page.
+      if (needsName()) {
+        try {
+          const resolved = await withTimeout(
+            resolveProductName({
+              marketplace: result.marketplace,
+              productId: result.productId,
+              cleanUrl: result.cleanUrl,
+              affiliateUrl: result.affiliateUrl,
+              resolvedUrl: result.resolvedUrl,
+            }),
+            4000
+          );
+          const name =
+            (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
+          if (name && !isPlaceholderTitle(name, result.productId)) {
+            info.title = name;
+            if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
           }
+        } catch (err) {
+          console.warn('track-time name resolution failed:', err.message);
         }
       }
 

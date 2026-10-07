@@ -178,8 +178,15 @@ module.exports = async (req, res) => {
     for (const src of scan.sources) {
       console.log(
         'deals: source ' + src.url + ' -> status=' + src.status + ' cards=' + src.cards +
-          ' matched=' + src.matched + (src.error ? ' error=' + src.error : '')
+          ' parsed=' + src.parsed + ' matched=' + src.matched + (src.error ? ' error=' + src.error : '')
       );
+      // Raw parses, so a 0-match run says WHY (missing title? price? discount?).
+      for (const sample of src.samples || []) {
+        console.log(
+          'deals:   sample title="' + sample.title + '" price=' + sample.price +
+            ' mrp=' + sample.mrp + ' discount=' + sample.discount + ' raw="' + sample.discRaw + '"'
+        );
+      }
     }
     console.log('deals: Fetched ' + deals.length + ' deal(s) from ' + scan.sources.length + ' source(s) in ' + scan.ms + 'ms');
     if (!deals.length) {

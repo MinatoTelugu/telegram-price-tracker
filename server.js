@@ -304,7 +304,7 @@ async function startPolling() {
 (async () => {
   await startPolling();
 
-  const priceCron = process.env.PRICE_CRON || '0 */6 * * *';
+  const priceCron = process.env.PRICE_CRON || '*/30 * * * *';
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
 
   cron.schedule(priceCron, () => {

@@ -74,6 +74,32 @@ switched to PA-API for Amazon.
 Please do **not** try to defeat the block with proxies or fingerprint spoofing:
 it breaks Amazon's terms and is unreliable.
 
+## Price-drop / back-in-stock alerts (the price-check loop)
+
+The worker is `api/cron.js`. It scans active products, re-fetches each one, stores
+a price point, and alerts every subscriber on:
+
+- a **price drop** of `PRICE_DROP_THRESHOLD_PERCENT` or more (default 1%)
+- a **price rise** of `PRICE_INCREASE_THRESHOLD_PERCENT` or more (default 5%)
+- an **out-of-stock → in-stock** transition (sent once, on the change)
+
+**It needs a trigger that keeps running.** On Koyeb the app also schedules the job
+internally (`PRICE_CRON`, default every 30 minutes) — but an in-process timer only
+fires while the instance is awake. If the service scales to zero, the job simply
+never runs and no alerts are sent.
+
+So on Koyeb, add an **external** trigger as well:
+
+    cron-job.org  ->  GET https://<your-app>.koyeb.app/api/cron
+                      every 15–30 minutes
+                      header: Authorization: Bearer <CRON_SECRET>
+
+That both runs the checks and keeps the instance awake. It is the only reliable
+way to get alerts on a host that sleeps.
+
+`GET /api/cron` returns a JSON summary (`checked`, `alertsSent`, per-product
+results), and each run logs `cron: …` lines so you can see it working.
+
 ## Running on Koyeb (long polling — no webhook)
 
 On Koyeb the app runs as a normal long-running process, so the bot uses

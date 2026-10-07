@@ -80,7 +80,13 @@ function formatAlert(product, oldPrice, newPrice, pct, kind) {
   const tail = link ? '\n\n🔗 ' + link : '';
 
   if (kind === 'restock') {
-    return '📦 <b>Back in stock!</b>\n\n' + name + (newPrice != null ? '\n\n₹' + newPrice : '') + tail;
+    return (
+      '📦 <b>The Product is currently In Stock.</b>\n\n' +
+      name +
+      '\n\nPreviously Out of Stock' +
+      (newPrice != null ? '\n\nCurrent Price: ₹' + newPrice : '') +
+      tail
+    );
   }
   if (kind === 'rise') {
     return (
@@ -148,6 +154,9 @@ async function processProduct(doc) {
 
   const oldPrice = typeof data.lastPrice === 'number' ? data.lastPrice : null;
   const newPrice = result.price;
+  // Capture the PREVIOUS stock state BEFORE the update below. Reading it after
+  // the write is fragile — the snapshot may already reflect the new value.
+  const wasOutOfStock = data.inStock === false;
 
   // Append the history point.
   await doc.ref.collection(COLLECTIONS.PRICE_HISTORY).add({
@@ -212,7 +221,6 @@ async function processProduct(doc) {
   }
 
   // Only on the TRANSITION, so we don't repeat it every run.
-  const wasOutOfStock = data.inStock === false;
   if (wasOutOfStock && result.inStock === true) {
     message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'restock');
   }
@@ -327,15 +335,29 @@ module.exports = async (req, res) => {
     });
 
     const batch = docs.slice(0, BATCH_SIZE);
+    console.log(
+      'cron: price check start — ' + docs.length + ' active product(s), processing ' + batch.length
+    );
+
     const results = [];
+    let alertsTotal = 0;
     for (const doc of batch) {
       try {
-        results.push(await processProduct(doc));
+        const r = await processProduct(doc);
+        results.push(r);
+        if (r && r.alerts) alertsTotal += r.alerts;
+        console.log(
+          'cron: ' + doc.id + ' -> ' + (r && r.status) +
+            (r && r.reason ? ' (' + r.reason + ')' : '') +
+            (r && r.oldPrice != null && r.newPrice != null ? ' price ' + r.oldPrice + '->' + r.newPrice : '') +
+            (r && r.alerts ? ' alerts=' + r.alerts : '')
+        );
       } catch (err) {
-        console.error('product failed', doc.id, err.message);
+        console.error('cron: product FAILED ' + doc.id + ' — ' + err.message);
         results.push({ id: doc.id, status: 'error', reason: err.message });
       }
     }
+    console.log('cron: done — ' + results.length + ' checked, ' + alertsTotal + ' alert(s) sent');
 
     // Keep the webhook pointed at this deployment (self-heal if it was mangled).
     const webhook = await ensureWebhook(req);

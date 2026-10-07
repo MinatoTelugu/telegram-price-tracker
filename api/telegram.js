@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-16 (2026-10-07)';
+const BUILD = 'names-17 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -252,7 +252,7 @@ async function findProductByToken(uid, token) {
 }
 
 
-const LIST_DIVIDER = '__________________________________________________';
+const LIST_DIVIDER = '____________________________________';
 
 // ---- simple per-user rate limit ------------------------------------------
 // Matches the reference bot's "Too many requests" guard. Set

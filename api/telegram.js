@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-12 (2026-10-07)';
+const BUILD = 'names-13 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -251,7 +251,6 @@ async function findProductByToken(uid, token) {
   return null;
 }
 
-const LIST_DIVIDER = '━━━━━━━━━━━━━━━━━━━━━';
 
 // ---- simple per-user rate limit ------------------------------------------
 // Matches the reference bot's "Too many requests" guard. Set
@@ -383,8 +382,7 @@ async function sendTrackingList(ctx) {
       //   🔗 Click here to view in Flipkart!
       //   📊 [ View Price History! ]
       //   🛑 Click /stop_TOKEN to stop tracking this product.
-      //   ━━━━━━━
-      //   (blank)
+      //   (blank line — the gap before the next product)
       const buy = d.affiliateUrl || d.cleanUrl;
       const token = String(rawToken).toUpperCase();
       const base = webAppBase();
@@ -405,7 +403,7 @@ async function sendTrackingList(ctx) {
         lines.push('📊 Click /history_' + token + ' to view the price history.');
       }
       lines.push('🛑 Click <code>/stop_' + token + '</code> to stop tracking this product.');
-      lines.push(LIST_DIVIDER);
+      // The gap between products — a blank line, no divider.
       lines.push('');
 
       // Its own buttons, numbered to match the item above. Telegram keyboards

@@ -33,8 +33,9 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-6 (2026-10-07)';
+const BUILD = 'names-7 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
+const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -742,6 +743,7 @@ function registerHandlers(bot) {
         // Name-resolution test: what happens when we try to find real names?
         try {
           const snap = await db.collection(COLLECTIONS.PRODUCTS).limit(3).get();
+          let shown = 0;
           for (const doc of snap.docs) {
             const d = doc.data();
             const r = await withTimeout(
@@ -760,6 +762,19 @@ function registerHandlers(bot) {
                 (name ? 'OK — ' + escapeHtml(String(name).slice(0, 60)) : 'FAILED (' + escapeHtml(String((r && r.reason) || '?')) + ')') +
                 ' | landed <code>' + escapeHtml(String((r && r.resolvedUrl) || '(none)').slice(0, 100)) + '</code>'
             );
+
+            // Show what the converter returns for this link — we need to know
+            // whether its response carries the product title (for links whose
+            // URL has no name slug). First product only, to stay quick.
+            if (shown === 0 && converterConfigured() && d.cleanUrl) {
+              shown++;
+              try {
+                const raw = await withTimeout(convertRaw(d.cleanUrl), 10000);
+                if (raw) lines.push('  converter raw: <code>' + escapeHtml(String(raw).slice(0, 300)) + '</code>');
+              } catch (err) {
+                lines.push('  converter raw: failed — ' + escapeHtml(String(err.message).slice(0, 120)));
+              }
+            }
           }
         } catch (err) {
           lines.push('name test failed: <code>' + escapeHtml(String(err.message).slice(0, 200)) + '</code>');

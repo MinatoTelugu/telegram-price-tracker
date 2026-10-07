@@ -25,7 +25,7 @@
  */
 
 const axios = require('axios');
-const { discoverDeals } = require('../lib/deals');
+const { discoverDealsDetailed } = require('../lib/deals');
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { shortenUrl } = require('../lib/shorten');
 
@@ -157,10 +157,27 @@ module.exports = async (req, res) => {
     return;
   }
 
+  const started = Date.now();
   try {
-    const deals = await discoverDeals({ minDiscount: MIN_DISCOUNT, limit: MAX_PER_RUN * 4 });
+    console.log('deals: run start — minDiscount=' + MIN_DISCOUNT + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + CHANNEL_ID);
+
+    const scan = await discoverDealsDetailed({ minDiscount: MIN_DISCOUNT, limit: MAX_PER_RUN * 4 });
+    const deals = scan.deals;
+
+    // Per-source detail, so a silent 0 is never a mystery again.
+    for (const src of scan.sources) {
+      console.log(
+        'deals: source ' + src.url + ' -> status=' + src.status + ' cards=' + src.cards +
+          ' matched=' + src.matched + (src.error ? ' error=' + src.error : '')
+      );
+    }
+    console.log('deals: Fetched ' + deals.length + ' deal(s) from ' + scan.sources.length + ' source(s) in ' + scan.ms + 'ms');
+    if (!deals.length) {
+      console.log('deals: nothing above the discount threshold — posting nothing this run');
+    }
 
     if (dryRun) {
+      console.log('deals: dry run — found ' + deals.length + ' deal(s), not posting');
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ok: true, dryRun: true, minDiscount: MIN_DISCOUNT, found: deals.length, deals }));
@@ -189,13 +206,22 @@ module.exports = async (req, res) => {
       const shortLink = (await shortenUrl(targetUrl)) || targetUrl;
 
       try {
+        console.log('deals: posting "' + String(deal.title).slice(0, 60) + '" (' + deal.discount + '% off) -> ' + shortLink);
         await postToChannel(deal, shortLink);
         await markPosted(deal.id, deal);
         posted.push({ id: deal.id, title: deal.title, discount: deal.discount, link: shortLink });
+        console.log('deals: posted ok — total so far ' + posted.length);
       } catch (err) {
+        console.warn('deals: post FAILED for ' + deal.id + ' — ' + err.message);
         skipped.push({ id: deal.id, reason: 'post_failed', error: err.message });
       }
     }
+
+    const ms = Date.now() - started;
+    console.log(
+      'deals: done — posted=' + posted.length + ' skipped=' + skipped.length +
+        ' found=' + deals.length + ' in ' + ms + 'ms'
+    );
 
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
@@ -212,6 +238,8 @@ module.exports = async (req, res) => {
         skippedCount: skipped.length,
         skipped,
         bitlyConfigured: Boolean(process.env.BITLY_ACCESS_TOKEN),
+        sources: scan.sources,
+        ms,
       })
     );
   } catch (err) {

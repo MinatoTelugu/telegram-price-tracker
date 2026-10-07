@@ -85,6 +85,16 @@ function prettifySlug(slug) {
     .join(' ');
 }
 
+/** Path segments that are placeholders, not product names. */
+const PLACEHOLDER_SLUGS = new Set([
+  'product', 'products', 'item', 'items', 'dl', 'p', 'dp', 'd', 'gp', 'buy', 'shop', 'store', 'detail', 'details',
+]);
+
+function isPlaceholderSlug(slug) {
+  const s = String(slug || '').toLowerCase();
+  return !s || PLACEHOLDER_SLUGS.has(s) || s.length < 4;
+}
+
 /**
  * Derive a product name straight from the link — no network needed.
  * Flipkart links carry the name as the path slug, and Amazon links usually do
@@ -103,19 +113,14 @@ function titleFromUrl(urlStr) {
 
   if (host.includes('flipkart')) {
     const i = parts.indexOf('p');
-    if (i > 0) {
-      const slug = parts[i - 1];
-      // The app share link is /product/p/itme?pid=... — "product" is not a name.
-      if (slug && slug.toLowerCase() !== 'product') return prettifySlug(slug);
-    }
+    if (i > 0 && !isPlaceholderSlug(parts[i - 1])) return prettifySlug(parts[i - 1]);
+    // Otherwise the FIRST segment is usually the real slug.
+    if (parts[0] && !isPlaceholderSlug(parts[0])) return prettifySlug(parts[0]);
     return null;
   }
   if (host.includes('amazon')) {
     const i = parts.findIndex((p) => p === 'dp' || p === 'product' || p === 'd');
-    if (i > 0) {
-      const slug = parts[i - 1];
-      if (slug && slug.toLowerCase() !== 'product') return prettifySlug(slug);
-    }
+    if (i > 0 && !isPlaceholderSlug(parts[i - 1])) return prettifySlug(parts[i - 1]);
     return null;
   }
   return null;
@@ -228,10 +233,12 @@ async function sendTrackingList(ctx) {
       let got = titleFromUrl(src);
       if (!got && src && backfilled < 3) {
         try {
-          const info = await withTimeout(fetchProduct(src, it.data.marketplace), 6000);
-          if (info && info.ok && info.title) {
-            got = info.title;
-            backfilled++;
+          const info = await withTimeout(fetchProduct(src, it.data.marketplace), 8000);
+          if (info) {
+            // fetchProduct resolves the canonical page — its slug IS the name.
+            if (info.resolvedUrl) it.data.resolvedUrl = info.resolvedUrl;
+            got = info.title || titleFromUrl(info.resolvedUrl) || null;
+            if (got) backfilled++;
           }
         } catch (err) {
           /* non-fatal — fall back to the id */
@@ -428,11 +435,6 @@ function buildTrackKeyboard(docId, result) {
   row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
   const rows = [row1, row2];
-
-  // A full-width fifth button, as in the reference layout.
-  const backup = process.env.BACKUP_BOT_URL || CHANNEL_URL;
-  if (backup) rows.push([Markup.button.url('🤖 Join Backup Bot', backup)]);
-
   return Markup.inlineKeyboard(rows);
 }
 
@@ -749,10 +751,10 @@ function registerHandlers(bot) {
           fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
           8000
         );
-        if (scraped && scraped.ok) {
+        if (scraped) {
           info = {
-            title: scraped.title || info.title,
-            price: scraped.price,
+            title: scraped.title || info.title || titleFromUrl(scraped.resolvedUrl || '') || null,
+            price: scraped.ok ? scraped.price : null,
             currency: scraped.currency || 'INR',
             imageUrl: scraped.imageUrl || null,
           };

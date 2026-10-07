@@ -33,8 +33,8 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-5 (2026-10-07)';
-const { convertAffiliateLink } = require('../lib/affiliate');
+const BUILD = 'names-6 (2026-10-07)';
+const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -900,24 +900,46 @@ function registerHandlers(bot) {
       // the converted affiliate link), then read og:title / <title>. This is
       // what turns a raw id into an actual product name.
       if (isPlaceholderTitle(info.title, result.productId)) {
-        try {
-          const resolved = await withTimeout(
-            resolveProductName({
-              marketplace: result.marketplace,
-              productId: result.productId,
-              cleanUrl: result.cleanUrl,
-              affiliateUrl: result.affiliateUrl,
-              resolvedUrl: result.resolvedUrl,
-            }),
-            8000
-          );
-          const name = (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
-          if (name && !isPlaceholderTitle(name, result.productId)) {
-            info.title = name;
-            if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
+        // FIRST, follow the converter's own link (ekaro.in / earnkaro.com). It
+        // redirects to the real product page, so its redirect chain reveals the
+        // canonical store URL — and therefore the product name from the slug —
+        // WITHOUT fetching the store itself, which drops connections from this
+        // host (Koyeb's datacenter IP).
+        if (result.affiliateUrl && result.affiliateUrl !== result.cleanUrl) {
+          try {
+            const finalUrl = await withTimeout(resolveShortUrl(result.affiliateUrl), 8000);
+            const fromLink = titleFromUrl(finalUrl || '');
+            if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
+              info.title = fromLink;
+              info.resolvedUrl = finalUrl;
+            }
+          } catch (err) {
+            console.warn('converter-link resolution failed:', err.message);
           }
-        } catch (err) {
-          console.warn('track-time name resolution failed:', err.message);
+        }
+
+        // Still nothing? Resolve it the hard way: follow the link, read og:title.
+        if (isPlaceholderTitle(info.title, result.productId)) {
+          try {
+            const resolved = await withTimeout(
+              resolveProductName({
+                marketplace: result.marketplace,
+                productId: result.productId,
+                cleanUrl: result.cleanUrl,
+                affiliateUrl: result.affiliateUrl,
+                resolvedUrl: result.resolvedUrl,
+              }),
+              8000
+            );
+            const name =
+              (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
+            if (name && !isPlaceholderTitle(name, result.productId)) {
+              info.title = name;
+              if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
+            }
+          } catch (err) {
+            console.warn('track-time name resolution failed:', err.message);
+          }
         }
       }
 

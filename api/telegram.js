@@ -36,7 +36,6 @@ const crypto = require('crypto');
 const BUILD = 'names-4 (2026-10-07)';
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
-const { shortenUrl } = require('../lib/shorten');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -292,7 +291,7 @@ async function sendTrackingList(ctx) {
       const src = it.data.resolvedUrl || it.data.cleanUrl || it.data.affiliateUrl || '';
 
       let got = titleFromUrl(src);
-      if (!got && backfilled < 3) {
+      if (!got && backfilled < 2) {
         try {
           const r = await withTimeout(
             resolveProductName({
@@ -302,7 +301,7 @@ async function sendTrackingList(ctx) {
               affiliateUrl: it.data.affiliateUrl,
               resolvedUrl: it.data.resolvedUrl,
             }),
-            20000
+            5000
           );
           if (r && r.resolvedUrl) it.data.resolvedUrl = r.resolvedUrl;
           got = (r && r.title) || titleFromUrl((r && r.resolvedUrl) || '') || null;
@@ -350,7 +349,7 @@ async function sendTrackingList(ctx) {
         it.doc.id;
       const market = d.marketplace === 'amazon' ? 'Amazon' : d.marketplace === 'flipkart' ? 'Flipkart' : d.marketplace;
       const buy = d.affiliateUrl || d.cleanUrl;
-      const buyLink = buy ? (await shortenUrl(buy)) || buy : null;
+      const buyLink = buy;
       const base = webAppBase();
       const hist = base ? base + '/?id=' + encodeURIComponent(it.doc.id) : null;
 
@@ -874,7 +873,7 @@ function registerHandlers(bot) {
       try {
         const scraped = await withTimeout(
           fetchProduct(result.cleanUrl || result.affiliateUrl, result.marketplace),
-          8000
+          4000
         );
         if (scraped) {
           info = {
@@ -890,9 +889,8 @@ function registerHandlers(bot) {
 
       const docId = await trackProduct(result, ctx.from, info);
 
-      // Shorten the outgoing link with Bitly when a token is configured.
-      const shortLink = await shortenUrl(result.affiliateUrl || result.cleanUrl);
-      const replyText = formatTrackingConfirmation(result, info, shortLink || null);
+      // The affiliate link is used directly — no Bitly, so your own tag stays visible.
+      const replyText = formatTrackingConfirmation(result, info, null);
       const extra = { parse_mode: 'HTML', ...buildTrackKeyboard(docId, result) };
       let sent = false;
       if (info.imageUrl && typeof ctx.replyWithPhoto === 'function') {

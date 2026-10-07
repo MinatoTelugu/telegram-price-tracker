@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-7 (2026-10-07)';
+const BUILD = 'names-8 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -559,15 +559,17 @@ function formatStamp(date) {
 /** The "link sent" confirmation, matching the reference layout. */
 function formatTrackingConfirmation(result, info, openUrl) {
   const market = result.marketplace === 'amazon' ? 'Amazon' : 'Flipkart';
-  const link = result.cleanUrl || result.affiliateUrl;
-  const open = openUrl || result.affiliateUrl || link;
+  const open = openUrl || result.affiliateUrl || result.cleanUrl;
+  // NOTE: no leading link line. It duplicated the link and made Telegram render
+  // its own link preview. This card is the whole message.
   const lines = [
-    '<a href="' + escapeHtml(link) + '">' + escapeHtml(link) + '</a>',
-    '',
     '<b>The Product has Started Tracking!</b>',
     '',
     '☀️ <b>' + escapeHtml(info.title || result.productId) + '</b>',
   ];
+  if (info.inStock === false) {
+    lines.push('', '😔 <b>Currently Out of Stock</b>');
+  }
   if (info.price != null) {
     const sym = (info.currency || 'INR') === 'INR' ? '₹' : '';
     lines.push('', 'Current Price: <b>' + sym + Number(info.price).toLocaleString('en-IN') + '</b>');
@@ -883,7 +885,12 @@ function registerHandlers(bot) {
         return;
       }
 
-      await ctx.reply('🔎 Converting your link…');
+      // Feedback without clutter: a typing indicator, not a chat message.
+      try {
+        if (typeof ctx.sendChatAction === 'function') await ctx.sendChatAction('typing');
+      } catch (err) {
+        /* not fatal */
+      }
       const result = await convertAffiliateLink(url);
 
       if (!result.ok) {
@@ -928,6 +935,7 @@ function registerHandlers(bot) {
             price: scraped.ok ? scraped.price : null,
             currency: scraped.currency || 'INR',
             imageUrl: scraped.imageUrl || null,
+            inStock: typeof scraped.inStock === 'boolean' ? scraped.inStock : null,
           };
         }
       } catch (err) {
@@ -985,7 +993,15 @@ function registerHandlers(bot) {
 
       // The affiliate link is used directly — no Bitly, so your own tag stays visible.
       const replyText = formatTrackingConfirmation(result, info, null);
-      const extra = { parse_mode: 'HTML', ...buildTrackKeyboard(docId, result) };
+      // Reply to the user's own link message, and never render a link preview.
+      const extra = {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        ...buildTrackKeyboard(docId, result),
+      };
+      if (ctx.message && ctx.message.message_id) {
+        extra.reply_parameters = { message_id: ctx.message.message_id };
+      }
       let sent = false;
       if (info.imageUrl && typeof ctx.replyWithPhoto === 'function') {
         try {

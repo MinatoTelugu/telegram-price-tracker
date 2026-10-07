@@ -48,6 +48,32 @@ Everything runs on **Vercel serverless functions** — no long-running server.
 Because products are shared, if ten users track the same item the cron job
 checks it **once**, not ten times.
 
+## Why Amazon scraping fails from a server (and what to do)
+
+Amazon answers requests from **datacenter IPs** (Koyeb, Vercel, AWS, …) with
+**HTTP 503**. This is not a User-Agent problem. The scraper already sends a full
+set of browser headers, retries with both a desktop and a mobile agent, and also
+tries Amazon's light mobile product page (`/gp/aw/d/ASIN`). Amazon fingerprints
+the **IP address**, so a server request is refused whatever the headers say.
+
+What this means in practice:
+
+- **Flipkart works fully** — title, price and history.
+- **Amazon**: a link that carries the product-name slug still yields the name,
+  because the name is read from the URL itself (no page fetch needed). That
+  covers most links you paste, and every `amzn.to` / `amzn.in` short link once it
+  is resolved. A **bare** `/dp/ASIN` link with no slug has no name to read and
+  no page to fetch, so it shows the ASIN.
+
+The correct fix for Amazon is Amazon's own **Product Advertising API (PA-API)**.
+It is the official, permitted way to read titles and prices, and it is not
+blocked. It needs an approved Associates account with API access (Amazon grants
+it after a few qualifying sales). If you have those keys, the scraper can be
+switched to PA-API for Amazon.
+
+Please do **not** try to defeat the block with proxies or fingerprint spoofing:
+it breaks Amazon's terms and is unreliable.
+
 ## Running on Koyeb (long polling — no webhook)
 
 On Koyeb the app runs as a normal long-running process, so the bot uses

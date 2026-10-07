@@ -105,36 +105,102 @@ async function markPosted(id, deal) {
   }
 }
 
+/**
+ * Turn an axios failure into Telegram's own words. Telegram replies with
+ * { ok:false, error_code, description } — the description is the actual reason
+ * ("bot is not a member of the channel chat", "not enough rights", ...), which
+ * is far more useful than "Request failed with status code 403".
+ */
+function describeTelegramError(err) {
+  const d = err && err.response && err.response.data;
+  if (d && typeof d === 'object') {
+    const desc = d.description || JSON.stringify(d);
+    return 'HTTP ' + (d.error_code || (err.response && err.response.status) || '?') + ' — ' + String(desc).slice(0, 300);
+  }
+  return err.message;
+}
+
+/**
+ * Pre-flight check. Answers, before we try to post: can the bot SEE this chat,
+ * what kind of chat is it, and what is the bot's own status in it? This is what
+ * turns a bare 403 into an actionable sentence.
+ */
+async function verifyChannel() {
+  const token = process.env.BOT_TOKEN;
+  if (!token) return { ok: false, error: 'BOT_TOKEN is not set' };
+
+  const api = 'https://api.telegram.org/bot' + token + '/';
+  const out = { channel: CHANNEL_ID };
+
+  try {
+    const chat = await axios.get(api + 'getChat', { params: { chat_id: CHANNEL_ID }, timeout: 10000 });
+    const r = chat.data && chat.data.result;
+    out.ok = true;
+    out.title = r && r.title;
+    out.type = r && r.type;
+    out.username = r && r.username;
+  } catch (err) {
+    out.ok = false;
+    out.error = describeTelegramError(err);
+    return out; // the bot cannot even see the chat — nothing else will work
+  }
+
+  try {
+    const me = await axios.get(api + 'getMe', { timeout: 10000 });
+    const bot = me.data && me.data.result;
+    out.bot = bot && bot.username;
+    if (bot && bot.id) {
+      const member = await axios.get(api + 'getChatMember', {
+        params: { chat_id: CHANNEL_ID, user_id: bot.id },
+        timeout: 10000,
+      });
+      out.botStatus = member.data && member.data.result && member.data.result.status; // 'administrator' | 'member' | 'left' | ...
+      out.canPostMessages =
+        member.data && member.data.result && member.data.result.can_post_messages !== false;
+    }
+  } catch (err) {
+    out.memberError = describeTelegramError(err);
+  }
+  return out;
+}
+
 async function postToChannel(deal, link) {
   const token = process.env.BOT_TOKEN;
   if (!token) throw new Error('BOT_TOKEN is not set');
 
   const caption = buildCaption(deal, link);
+  const api = 'https://api.telegram.org/bot' + token + '/';
+  let photoError = null;
 
   if (deal.imageUrl) {
     try {
       await axios.post(
-        'https://api.telegram.org/bot' + token + '/sendPhoto',
-        {
-          chat_id: CHANNEL_ID,
-          photo: deal.imageUrl,
-          caption,
-          parse_mode: 'HTML',
-        },
+        api + 'sendPhoto',
+        { chat_id: CHANNEL_ID, photo: deal.imageUrl, caption, parse_mode: 'HTML' },
         { timeout: 15000 }
       );
       return true;
     } catch (err) {
-      console.warn('sendPhoto failed, falling back to text:', err.message);
+      photoError = describeTelegramError(err);
+      console.warn('deals: sendPhoto failed — ' + photoError + ' (falling back to text)');
     }
   }
 
-  await axios.post(
-    'https://api.telegram.org/bot' + token + '/sendMessage',
-    { chat_id: CHANNEL_ID, text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
-    { timeout: 15000 }
-  );
-  return true;
+  try {
+    await axios.post(
+      api + 'sendMessage',
+      { chat_id: CHANNEL_ID, text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
+      { timeout: 15000 }
+    );
+    return true;
+  } catch (err) {
+    const textError = describeTelegramError(err);
+    console.warn('deals: sendMessage failed — ' + textError);
+    // Both routes failed: report BOTH reasons so the cause is unambiguous.
+    throw new Error(
+      'telegram: ' + textError + (photoError ? ' | sendPhoto: ' + photoError : '') + ' (channel ' + CHANNEL_ID + ')'
+    );
+  }
 }
 
 module.exports = async (req, res) => {
@@ -170,6 +236,24 @@ module.exports = async (req, res) => {
   const started = Date.now();
   try {
     console.log('deals: run start — minDiscount=' + minDiscount + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + CHANNEL_ID);
+
+    // Pre-flight the channel: if the bot cannot post, say so once, clearly.
+    const channel = await verifyChannel();
+    if (channel.ok) {
+      console.log(
+        'deals: channel ok — title="' + channel.title + '" type=' + channel.type +
+          ' bot=@' + channel.bot + ' botStatus=' + channel.botStatus +
+          ' canPostMessages=' + channel.canPostMessages
+      );
+      if (channel.botStatus && channel.botStatus !== 'administrator') {
+        console.warn(
+          'deals: the bot is NOT an administrator of ' + CHANNEL_ID +
+            ' (status=' + channel.botStatus + '). Telegram requires admin rights to post to a channel.'
+        );
+      }
+    } else {
+      console.error('deals: channel check FAILED for ' + CHANNEL_ID + ' — ' + channel.error);
+    }
 
     const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4 });
     const deals = scan.deals;
@@ -256,6 +340,7 @@ module.exports = async (req, res) => {
         skipped,
         bitlyConfigured: Boolean(process.env.BITLY_ACCESS_TOKEN),
         sources: scan.sources,
+        channelCheck: channel,
         ms,
       })
     );

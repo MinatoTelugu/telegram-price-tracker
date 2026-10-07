@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-11 (2026-10-07)';
+const BUILD = 'names-12 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -251,7 +251,7 @@ async function findProductByToken(uid, token) {
   return null;
 }
 
-const LIST_DIVIDER = '_______________________________________';
+const LIST_DIVIDER = '━━━━━━━━━━━━━━━━━━━━━';
 
 // ---- simple per-user rate limit ------------------------------------------
 // Matches the reference bot's "Too many requests" guard. Set
@@ -350,7 +350,7 @@ async function sendTrackingList(ctx) {
       }
     }
 
-    const lines = ['📋 <b>Your tracked products</b> (' + items.length + ')', ''];
+    const lines = ['🛍️ <b>Your tracked products</b> (' + items.length + ')', ''];
     const buttonRows = [];
     let index = 0;
     for (const it of items) {
@@ -376,29 +376,37 @@ async function sendTrackingList(ctx) {
       const price = d.lastPrice != null ? '₹' + Number(d.lastPrice).toLocaleString('en-IN') : null;
       const meta = [price, market].filter(Boolean).join(' · ');
 
-      // The explicit, clickable per-item format:
-      //   N. Title
-      //   Click here to view in <Store>!
-      //   [ View Price History! ]
-      //   Click /stop_<TOKEN> to stop tracking this product.
+      // Styled per-item block, matching the requested template:
+      //   🛍️ 1. Title
+      //   🏷️ Flipkart
+      //   (blank)
+      //   🔗 Click here to view in Flipkart!
+      //   📊 [ View Price History! ]
+      //   🛑 Click /stop_TOKEN to stop tracking this product.
+      //   ━━━━━━━
+      //   (blank)
       const buy = d.affiliateUrl || d.cleanUrl;
       const token = String(rawToken).toUpperCase();
       const base = webAppBase();
 
-      lines.push('<b>' + index + '. ' + escapeHtml(title) + '</b>');
-      if (meta) lines.push(escapeHtml(meta));
+      lines.push('🛍️ <b>' + index + '. ' + escapeHtml(title) + '</b>');
+      lines.push('🏷️ <i>' + escapeHtml(market) + '</i>');
+      lines.push('');
       if (buy) {
-        lines.push('<a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
+        lines.push('🔗 <a href="' + escapeHtml(buy) + '">Click here to view in ' + escapeHtml(market) + '!</a>');
       }
       if (base) {
         lines.push(
-          '<a href="' + escapeHtml(base + '/?id=' + encodeURIComponent(it.doc.id)) + '">[ View Price History! ]</a>'
+          '📊 <a href="' +
+            escapeHtml(base + '/?id=' + encodeURIComponent(it.doc.id)) +
+            '">[ View Price History! ]</a>'
         );
       } else {
-        lines.push('Click /history_' + token + ' to view the price history.');
+        lines.push('📊 Click /history_' + token + ' to view the price history.');
       }
-      lines.push('Click /stop_' + token + ' to stop tracking this product.');
+      lines.push('🛑 Click <code>/stop_' + token + '</code> to stop tracking this product.');
       lines.push(LIST_DIVIDER);
+      lines.push('');
 
       // Its own buttons, numbered to match the item above. Telegram keyboards
       // attach to a message, so numbering is how we tie a button to its item.

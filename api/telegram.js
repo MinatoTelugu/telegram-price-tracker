@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-19 (2026-10-07)';
+const BUILD = 'names-20 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -779,6 +779,12 @@ function registerHandlers(bot) {
           (process.env.AFFILIATERS_TOKEN ? 'set' : 'NOT set — Flipkart/other links will not be converted')
       );
       lines.push('AFFILIATERS_CONVERTER_URL: ' + (process.env.AFFILIATERS_CONVERTER_URL || '(default)'));
+      lines.push(
+        'CUELINKS_API_KEY: ' +
+          (process.env.CUELINKS_API_KEY
+            ? 'set (' + (process.env.CUELINKS_API_URL || 'default endpoint') + ')'
+            : 'NOT set — non-Amazon links use the fallback')
+      );
       lines.push('AMAZON_AFFILIATE_TAG: ' + (process.env.AMAZON_AFFILIATE_TAG || 'not set'));
       lines.push(
         'TELEGRAM_CHANNEL_ID: ' +

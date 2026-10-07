@@ -31,7 +31,7 @@ const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
 const { convertAffiliateLink } = require('../lib/affiliate');
-const { fetchProduct } = require('../lib/scraper');
+const { fetchProduct, resolveProductName } = require('../lib/scraper');
 const { shortenUrl } = require('../lib/shorten');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -248,15 +248,21 @@ async function sendTrackingList(ctx) {
       const src = it.data.resolvedUrl || it.data.cleanUrl || it.data.affiliateUrl || '';
 
       let got = titleFromUrl(src);
-      if (!got && src && backfilled < 3) {
+      if (!got && backfilled < 3) {
         try {
-          const info = await withTimeout(fetchProduct(src, it.data.marketplace), 8000);
-          if (info) {
-            // fetchProduct resolves the canonical page — its slug IS the name.
-            if (info.resolvedUrl) it.data.resolvedUrl = info.resolvedUrl;
-            got = info.title || titleFromUrl(info.resolvedUrl) || null;
-            if (got) backfilled++;
-          }
+          const r = await withTimeout(
+            resolveProductName({
+              marketplace: it.data.marketplace,
+              productId: it.data.productId,
+              cleanUrl: it.data.cleanUrl,
+              affiliateUrl: it.data.affiliateUrl,
+              resolvedUrl: it.data.resolvedUrl,
+            }),
+            20000
+          );
+          if (r && r.resolvedUrl) it.data.resolvedUrl = r.resolvedUrl;
+          got = (r && r.title) || titleFromUrl((r && r.resolvedUrl) || '') || null;
+          backfilled++;
         } catch (err) {
           /* non-fatal — fall back to the id */
         }
@@ -645,6 +651,32 @@ function registerHandlers(bot) {
               escapeHtml(String(err.code || '') + ' ' + String(err.message || err).slice(0, 300)) +
               '</code>'
           );
+        }
+
+        // Name-resolution test: what happens when we try to find real names?
+        try {
+          const snap = await db.collection(COLLECTIONS.PRODUCTS).limit(3).get();
+          for (const doc of snap.docs) {
+            const d = doc.data();
+            const r = await withTimeout(
+              resolveProductName({
+                marketplace: d.marketplace,
+                productId: d.productId,
+                cleanUrl: d.cleanUrl,
+                affiliateUrl: d.affiliateUrl,
+                resolvedUrl: d.resolvedUrl,
+              }),
+              20000
+            );
+            const name = (r && r.title) || titleFromUrl((r && r.resolvedUrl) || '') || null;
+            lines.push(
+              'name <code>' + escapeHtml(doc.id) + '</code>: ' +
+                (name ? 'OK — ' + escapeHtml(String(name).slice(0, 60)) : 'FAILED (' + escapeHtml(String((r && r.reason) || '?')) + ')') +
+                ' | landed <code>' + escapeHtml(String((r && r.resolvedUrl) || '(none)').slice(0, 100)) + '</code>'
+            );
+          }
+        } catch (err) {
+          lines.push('name test failed: <code>' + escapeHtml(String(err.message).slice(0, 200)) + '</code>');
         }
       }
     } catch (err) {

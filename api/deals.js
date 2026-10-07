@@ -182,6 +182,10 @@ async function postToChannel(deal, link) {
   const api = 'https://api.telegram.org/bot' + token + '/';
   let photoError = null;
 
+  if (!deal.imageUrl) {
+    console.log('deals: no image for ' + deal.id + ' — sending text with a link preview');
+  }
+
   if (deal.imageUrl) {
     try {
       await axios.post(
@@ -189,6 +193,7 @@ async function postToChannel(deal, link) {
         { chat_id: channelId(), photo: deal.imageUrl, caption, parse_mode: 'HTML' },
         { timeout: 15000 }
       );
+      console.log('deals: sent as a PHOTO — ' + String(deal.imageUrl).slice(0, 70));
       return true;
     } catch (err) {
       photoError = describeTelegramError(err);
@@ -278,7 +283,8 @@ module.exports = async (req, res) => {
       for (const sample of src.samples || []) {
         console.log(
           'deals:   sample title="' + sample.title + '" price=' + sample.price +
-            ' mrp=' + sample.mrp + ' discount=' + sample.discount + ' raw="' + sample.discRaw + '"'
+            ' mrp=' + sample.mrp + ' discount=' + sample.discount + ' raw="' + sample.discRaw +
+            '" image=' + (sample.image ? sample.image : 'NONE')
         );
       }
     }

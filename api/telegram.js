@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-29 (2026-10-07)';
+const BUILD = 'names-30 (2026-10-07)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -813,9 +813,16 @@ function registerHandlers(bot) {
             : 'NOT set — non-Amazon links use the fallback')
       );
       lines.push('AMAZON_AFFILIATE_TAG: ' + (process.env.AMAZON_AFFILIATE_TAG || 'not set'));
+      const channelId =
+        process.env.CHANNEL_ID || process.env.DEALS_CHANNEL_ID || process.env.TELEGRAM_CHANNEL_ID;
       lines.push(
-        'TELEGRAM_CHANNEL_ID: ' +
-          (process.env.TELEGRAM_CHANNEL_ID || process.env.DEALS_CHANNEL_ID || '(default)')
+        'CHANNEL_ID: ' +
+          (channelId || '(default)') +
+          (process.env.CHANNEL_ID
+            ? '  [from CHANNEL_ID]'
+            : channelId
+            ? '  [from a legacy var — rename it to CHANNEL_ID]'
+            : '')
       );
       if (db) {
         try {

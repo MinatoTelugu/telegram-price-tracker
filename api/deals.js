@@ -15,7 +15,8 @@
  *
  * Env vars:
  *   BOT_TOKEN              -> to post to the channel
- *   DEALS_CHANNEL_ID       -> channel chat id (default -1004386388150)
+ *   CHANNEL_ID             -> channel chat id (default -1004386388150)
+ *                             (DEALS_CHANNEL_ID / TELEGRAM_CHANNEL_ID still accepted)
  *   BITLY_ACCESS_TOKEN     -> Bitly v4 token
  *   MIN_DISCOUNT / DEALS_MIN_DISCOUNT -> threshold % (default 20)
  *   ?minDiscount=NN        -> per-run override
@@ -43,11 +44,20 @@ const db = fb && fb.db;
 const admin = fb && fb.admin;
 const COLLECTIONS = (fb && fb.COLLECTIONS) || { DEALS_POSTED: 'deals_posted' };
 
-const CHANNEL_ID =
-  process.env.DEALS_CHANNEL_ID ||
-  process.env.TELEGRAM_CHANNEL_ID ||
-  process.env.CHANNEL_ID ||
-  '-1004386388150';
+/**
+ * The target channel. CHANNEL_ID is the primary name; DEALS_CHANNEL_ID and
+ * TELEGRAM_CHANNEL_ID are still read as fallbacks so an existing deployment
+ * keeps working after the rename — CHANNEL_ID wins when both are set.
+ * Read at call time, not at load, so a change is picked up without a rebuild.
+ */
+function channelId() {
+  return (
+    process.env.CHANNEL_ID ||
+    process.env.DEALS_CHANNEL_ID ||
+    process.env.TELEGRAM_CHANNEL_ID ||
+    '-1004386388150'
+  );
+}
 // Default is 20% — anything at or above it is posted.
 const MIN_DISCOUNT = parseFloat(
   process.env.MIN_DISCOUNT || process.env.DEALS_MIN_DISCOUNT || '20'
@@ -130,10 +140,10 @@ async function verifyChannel() {
   if (!token) return { ok: false, error: 'BOT_TOKEN is not set' };
 
   const api = 'https://api.telegram.org/bot' + token + '/';
-  const out = { channel: CHANNEL_ID };
+  const out = { channel: channelId() };
 
   try {
-    const chat = await axios.get(api + 'getChat', { params: { chat_id: CHANNEL_ID }, timeout: 10000 });
+    const chat = await axios.get(api + 'getChat', { params: { chat_id: channelId() }, timeout: 10000 });
     const r = chat.data && chat.data.result;
     out.ok = true;
     out.title = r && r.title;
@@ -151,7 +161,7 @@ async function verifyChannel() {
     out.bot = bot && bot.username;
     if (bot && bot.id) {
       const member = await axios.get(api + 'getChatMember', {
-        params: { chat_id: CHANNEL_ID, user_id: bot.id },
+        params: { chat_id: channelId(), user_id: bot.id },
         timeout: 10000,
       });
       out.botStatus = member.data && member.data.result && member.data.result.status; // 'administrator' | 'member' | 'left' | ...
@@ -176,7 +186,7 @@ async function postToChannel(deal, link) {
     try {
       await axios.post(
         api + 'sendPhoto',
-        { chat_id: CHANNEL_ID, photo: deal.imageUrl, caption, parse_mode: 'HTML' },
+        { chat_id: channelId(), photo: deal.imageUrl, caption, parse_mode: 'HTML' },
         { timeout: 15000 }
       );
       return true;
@@ -189,7 +199,7 @@ async function postToChannel(deal, link) {
   try {
     await axios.post(
       api + 'sendMessage',
-      { chat_id: CHANNEL_ID, text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
+      { chat_id: channelId(), text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
       { timeout: 15000 }
     );
     return true;
@@ -198,7 +208,7 @@ async function postToChannel(deal, link) {
     console.warn('deals: sendMessage failed — ' + textError);
     // Both routes failed: report BOTH reasons so the cause is unambiguous.
     throw new Error(
-      'telegram: ' + textError + (photoError ? ' | sendPhoto: ' + photoError : '') + ' (channel ' + CHANNEL_ID + ')'
+      'telegram: ' + textError + (photoError ? ' | sendPhoto: ' + photoError : '') + ' (channel ' + channelId() + ')'
     );
   }
 }
@@ -235,7 +245,7 @@ module.exports = async (req, res) => {
 
   const started = Date.now();
   try {
-    console.log('deals: run start — minDiscount=' + minDiscount + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + CHANNEL_ID);
+    console.log('deals: run start — minDiscount=' + minDiscount + '% maxPerRun=' + MAX_PER_RUN + ' channel=' + channelId());
 
     // Pre-flight the channel: if the bot cannot post, say so once, clearly.
     const channel = await verifyChannel();
@@ -247,12 +257,12 @@ module.exports = async (req, res) => {
       );
       if (channel.botStatus && channel.botStatus !== 'administrator') {
         console.warn(
-          'deals: the bot is NOT an administrator of ' + CHANNEL_ID +
+          'deals: the bot is NOT an administrator of ' + channelId() +
             ' (status=' + channel.botStatus + '). Telegram requires admin rights to post to a channel.'
         );
       }
     } else {
-      console.error('deals: channel check FAILED for ' + CHANNEL_ID + ' — ' + channel.error);
+      console.error('deals: channel check FAILED for ' + channelId() + ' — ' + channel.error);
     }
 
     const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4 });
@@ -281,7 +291,9 @@ module.exports = async (req, res) => {
       console.log('deals: dry run — found ' + deals.length + ' deal(s), not posting');
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ok: true, dryRun: true, minDiscount, found: deals.length, deals }));
+      res.end(
+        JSON.stringify({ ok: true, dryRun: true, channel: channelId(), minDiscount, found: deals.length, deals })
+      );
       return;
     }
 
@@ -330,7 +342,7 @@ module.exports = async (req, res) => {
       JSON.stringify({
         success: true,
         ok: true,
-        channel: CHANNEL_ID,
+        channel: channelId(),
         deals_posted: posted.length,
         minDiscount,
         found: deals.length,

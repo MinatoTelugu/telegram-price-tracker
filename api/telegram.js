@@ -664,6 +664,16 @@ function registerHandlers(bot) {
       );
       lines.push('BITLY_ACCESS_TOKEN: ' + (process.env.BITLY_ACCESS_TOKEN ? 'set' : 'not set'));
       lines.push('WEB_APP_URL: ' + (process.env.WEB_APP_URL || 'not set'));
+      lines.push(
+        'AFFILIATERS_TOKEN: ' +
+          (process.env.AFFILIATERS_TOKEN ? 'set' : 'NOT set — Flipkart/other links will not be converted')
+      );
+      lines.push('AFFILIATERS_CONVERTER_URL: ' + (process.env.AFFILIATERS_CONVERTER_URL || '(default)'));
+      lines.push('AMAZON_AFFILIATE_TAG: ' + (process.env.AMAZON_AFFILIATE_TAG || 'not set'));
+      lines.push(
+        'TELEGRAM_CHANNEL_ID: ' +
+          (process.env.TELEGRAM_CHANNEL_ID || process.env.DEALS_CHANNEL_ID || '(default)')
+      );
       lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));
       if (fbError) lines.push('firebase load error: <code>' + escapeHtml(String(fbError).slice(0, 220)) + '</code>');
 

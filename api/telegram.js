@@ -30,6 +30,10 @@
 const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 const crypto = require('crypto');
+
+// Bump this whenever behaviour changes. /diag prints it, so we can tell at a
+// glance whether the running deployment is the newest code or an old build.
+const BUILD = 'names-4 (2026-10-07)';
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 const { shortenUrl } = require('../lib/shorten');
@@ -602,6 +606,7 @@ function registerHandlers(bot) {
 
     const lines = ['🩺 <b>Diagnostics</b>', ''];
     try {
+      lines.push('build: <code>' + escapeHtml(BUILD) + '</code>');
       lines.push('BOT_TOKEN: ' + (process.env.BOT_TOKEN ? 'set' : 'MISSING'));
       lines.push('FIREBASE_SERVICE_ACCOUNT_KEY: ' + (process.env.FIREBASE_SERVICE_ACCOUNT_KEY ? 'set' : 'not set'));
       lines.push(

@@ -42,7 +42,11 @@ const db = fb && fb.db;
 const admin = fb && fb.admin;
 const COLLECTIONS = (fb && fb.COLLECTIONS) || { DEALS_POSTED: 'deals_posted' };
 
-const CHANNEL_ID = process.env.DEALS_CHANNEL_ID || '-1004386388150';
+const CHANNEL_ID =
+  process.env.DEALS_CHANNEL_ID ||
+  process.env.TELEGRAM_CHANNEL_ID ||
+  process.env.CHANNEL_ID ||
+  '-1004386388150';
 const MIN_DISCOUNT = parseFloat(process.env.DEALS_MIN_DISCOUNT || '50');
 const MAX_PER_RUN = parseInt(process.env.DEALS_MAX_PER_RUN || '5', 10);
 const REPOST_DAYS = parseInt(process.env.DEALS_REPOST_DAYS || '30', 10);
@@ -175,6 +179,13 @@ module.exports = async (req, res) => {
 
       const affiliate = await convertAffiliateLink(deal.url);
       const targetUrl = affiliate.ok ? affiliate.affiliateUrl : deal.url;
+      if (affiliate.ok && !affiliate.hasAffiliateTag) {
+        console.warn(
+          'deal posted WITHOUT an affiliate tag (marketplace=' + affiliate.marketplace +
+            '). Set AMAZON_AFFILIATE_TAG / FLIPKART_AFFILIATE_ID to monetise it.'
+        );
+      }
+      // Bitly stays ON for channel posts only (bot replies use the link directly).
       const shortLink = (await shortenUrl(targetUrl)) || targetUrl;
 
       try {
@@ -190,7 +201,10 @@ module.exports = async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.end(
       JSON.stringify({
+        success: true,
         ok: true,
+        channel: CHANNEL_ID,
+        deals_posted: posted.length,
         minDiscount: MIN_DISCOUNT,
         found: deals.length,
         postedCount: posted.length,

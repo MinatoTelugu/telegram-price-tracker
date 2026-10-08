@@ -33,8 +33,14 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-43 (2026-10-08)';
-const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
+const BUILD = 'names-44 (2026-10-08)';
+const {
+  convertAffiliateLink,
+  resolveShortUrl,
+  detectMarketplace,
+  extractAmazonAsin,
+  extractFlipkartPid,
+} = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 
@@ -605,6 +611,119 @@ function buildTrackKeyboard(docId, result) {
  */
 function internalCronHeaders() {
   return process.env.CRON_SECRET ? { authorization: 'Bearer ' + process.env.CRON_SECRET } : {};
+}
+
+/**
+ * Classify a link WITHOUT any network call. Returns null when we cannot be sure
+ * of the product identity from the URL alone (e.g. a dl.flipkart.com share
+ * link) — those must be resolved first, because the resolved id decides which
+ * record they belong to.
+ */
+function quickClassify(raw) {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    const market = detectMarketplace(host);
+    if (market === 'amazon') {
+      const asin = extractAmazonAsin(raw);
+      if (!asin) return null;
+      return {
+        marketplace: 'amazon',
+        productId: asin,
+        cleanUrl: 'https://' + host + '/dp/' + asin,
+        title: titleFromUrl(raw),
+      };
+    }
+    if (market === 'flipkart') {
+      const pid = extractFlipkartPid(u);
+      if (!pid) return null;
+      return {
+        marketplace: 'flipkart',
+        productId: pid,
+        cleanUrl: raw.split('?')[0],
+        title: titleFromUrl(raw),
+      };
+    }
+  } catch (err) {
+    /* not classifiable */
+  }
+  return null;
+}
+
+/**
+ * Background enrichment for the instant-reply path. Converts the link, reads the
+ * page, updates the record, and EDITS the message we already sent — so the user
+ * sees one card that fills itself in rather than waiting a minute for it.
+ */
+async function enrichTracked(ctx, sentMessage, rawUrl, from) {
+  try {
+    const result = await convertAffiliateLink(rawUrl);
+    if (!result || !result.ok) return;
+
+    let info = {
+      title: titleFromUrl(result.resolvedUrl || rawUrl || result.cleanUrl),
+      price: null,
+      currency: 'INR',
+      imageUrl: null,
+    };
+
+    const [scraped, viaConverter] = await Promise.all([
+      withTimeout(fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace), 2500).catch(() => null),
+      result.affiliateUrl && result.affiliateUrl !== result.cleanUrl
+        ? withTimeout(resolveShortUrl(result.affiliateUrl), 4000).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    if (scraped) {
+      info = {
+        title: scraped.title || info.title || null,
+        price: scraped.ok ? scraped.price : null,
+        currency: scraped.currency || 'INR',
+        imageUrl: scraped.imageUrl || null,
+        inStock: typeof scraped.inStock === 'boolean' ? scraped.inStock : null,
+      };
+    }
+    if (viaConverter) {
+      const fromLink = titleFromUrl(viaConverter);
+      if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
+        info.title = fromLink;
+        info.resolvedUrl = viaConverter;
+      }
+    }
+    if (isPlaceholderTitle(info.title, result.productId)) {
+      const resolved = await withTimeout(
+        resolveProductName({
+          marketplace: result.marketplace,
+          productId: result.productId,
+          cleanUrl: result.cleanUrl,
+          affiliateUrl: result.affiliateUrl,
+          resolvedUrl: result.resolvedUrl,
+        }),
+        4000
+      ).catch(() => null);
+      const name = (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '');
+      if (name && !isPlaceholderTitle(name, result.productId)) {
+        info.title = name;
+        if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
+      }
+    }
+
+    await trackProduct(result, from, info);
+
+    // Fill in the card we already sent.
+    if (sentMessage && sentMessage.message_id && ctx.chat && ctx.telegram && ctx.telegram.editMessageText) {
+      const text = formatTrackingConfirmation(result, info, null);
+      await ctx.telegram
+        .editMessageText(ctx.chat.id, sentMessage.message_id, undefined, text, {
+          parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
+        })
+        .catch(() => {});
+      console.log('track: enriched message for ' + result.productId);
+    }
+  } catch (err) {
+    console.warn('background enrichment failed:', err.message);
+  }
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -1327,6 +1446,45 @@ function registerHandlers(bot) {
       } catch (err) {
         /* not fatal */
       }
+      // ---- FAST PATH ---------------------------------------------------------
+      // When the URL already carries the product id, we can start tracking with
+      // NO network call at all. Reply instantly, save immediately, then enrich
+      // in the background and edit the card in place. This is what removes the
+      // minute-long wait.
+      const quick = quickClassify(url);
+      if (quick && db) {
+        await upsertUser(ctx.from).catch(() => {});
+        const instantResult = {
+          ok: true,
+          marketplace: quick.marketplace,
+          productId: quick.productId,
+          cleanUrl: quick.cleanUrl,
+          affiliateUrl: quick.cleanUrl,
+          hasAffiliateTag: false,
+          originalUrl: url,
+          resolvedUrl: quick.cleanUrl,
+        };
+        const instantInfo = { title: quick.title, price: null, currency: 'INR', imageUrl: null };
+
+        const docId = await trackProduct(instantResult, ctx.from, instantInfo);
+
+        const extra = {
+          parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
+          ...buildTrackKeyboard(docId, instantResult),
+        };
+        if (ctx.message && ctx.message.message_id) {
+          extra.reply_parameters = { message_id: ctx.message.message_id };
+        }
+        const sent = await ctx.reply(formatTrackingConfirmation(instantResult, instantInfo, null), extra);
+
+        // Enrich AFTER replying — never before.
+        enrichTracked(ctx, sent, url, ctx.from).catch((err) =>
+          console.warn('enrich failed:', err.message)
+        );
+        return;
+      }
+
       const result = await convertAffiliateLink(url);
 
       if (!result.ok) {

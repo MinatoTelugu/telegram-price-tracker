@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-38 (2026-10-08)';
+const BUILD = 'names-39 (2026-10-08)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -1185,7 +1185,8 @@ function registerHandlers(bot) {
       const lines = [
         '✅ <b>Price check complete</b>',
         '',
-        'scanned: ' + (summary.scanned || 0),
+        'products in db: ' + (summary.totalProducts != null ? summary.totalProducts : '?'),
+        'active (scanned): ' + (summary.scanned || 0),
         'processed: ' + (summary.processed || 0),
         'checked: ' + (summary.checked || 0),
         'skipped: ' + (summary.skipped || 0),

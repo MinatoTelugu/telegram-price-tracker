@@ -362,15 +362,23 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // Single-field filter -> no composite index required.
-    const snap = await db
-      .collection(COLLECTIONS.PRODUCTS)
-      .where('active', '==', true)
-      .limit(SCAN_LIMIT)
-      .get();
+    // Read a page of products WITHOUT a where() clause, then filter in code.
+    //
+    // Filtering on active == true in the query looks right but silently returns
+    // NOTHING if the field is missing or not exactly boolean true on the stored
+    // docs — which is exactly how this loop went quiet while /list (which
+    // queries by subscribers, not active) still showed the products. Treating a
+    // missing `active` as "active" means a product is only skipped when it has
+    // been explicitly stopped.
+    const snap = await db.collection(COLLECTIONS.PRODUCTS).limit(SCAN_LIMIT).get();
+    const totalProducts = snap.docs.length;
+    const activeDocs = snap.docs.filter((d) => {
+      const v = d.data();
+      return v && v.active !== false;
+    });
 
     // Rotate fairly: oldest-checked (and never-checked) products first.
-    const docs = snap.docs.slice().sort((a, b) => {
+    const docs = activeDocs.slice().sort((a, b) => {
       const av = a.data().lastCheckedAt;
       const bv = b.data().lastCheckedAt;
       const at = av && av.toMillis ? av.toMillis() : 0;
@@ -380,7 +388,8 @@ module.exports = async (req, res) => {
 
     const batch = docs.slice(0, BATCH_SIZE);
     console.log(
-      'cron: price check start — ' + docs.length + ' active product(s), processing ' + batch.length
+      'cron: price check start — ' + docs.length + ' active of ' + totalProducts +
+        ' product(s), processing ' + batch.length
     );
 
     const results = [];
@@ -412,6 +421,7 @@ module.exports = async (req, res) => {
       webhook,
       commands,
       scanned: docs.length,
+      totalProducts,
       processed: batch.length,
       checked: results.filter((r) => r.status === 'checked').length,
       skipped: results.filter((r) => r.status === 'skipped').length,

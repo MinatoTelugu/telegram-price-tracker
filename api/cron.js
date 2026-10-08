@@ -172,12 +172,28 @@ async function processProduct(doc) {
 
   if (!result.ok) {
     // Still record that we tried, so rotation moves on to other products.
-    await doc.ref.set(
-      { lastCheckedAt: FieldValue.serverTimestamp(), lastCheckError: result.reason },
-      { merge: true }
+    const skipUpdate = {
+      lastCheckedAt: FieldValue.serverTimestamp(),
+      lastCheckError: result.reason,
+    };
+
+    // CRITICAL: persist a KNOWN stock state even when there is no price.
+    // An out-of-stock product has no price, so it lands here as
+    // price_not_found — and if we don't record inStock=false now, the later
+    // "back in stock" transition can never be detected and that alert can
+    // never fire. This is why restock alerts were silent.
+    if (typeof result.inStock === 'boolean') skipUpdate.inStock = result.inStock;
+    if (result.title) skipUpdate.title = result.title;
+    if (result.resolvedUrl) skipUpdate.fetchUrl = result.resolvedUrl;
+    if (result.imageUrl) skipUpdate.imageUrl = result.imageUrl;
+
+    await doc.ref.set(skipUpdate, { merge: true });
+    console.warn(
+      'cron: ' + doc.id + ' skipped (' + result.reason + ')' +
+        (typeof result.inStock === 'boolean' ? ' inStock=' + result.inStock : '') +
+        ' fetching ' + String(url).slice(0, 90)
     );
-    console.warn('cron: ' + doc.id + ' skipped (' + result.reason + ') fetching ' + String(url).slice(0, 90));
-    return { id: doc.id, status: 'skipped', reason: result.reason, url: String(url).slice(0, 120), httpStatus: result.status || null, snippet: result.snippet || null };
+    return { id: doc.id, status: 'skipped', reason: result.reason, url: String(url).slice(0, 120), inStock: typeof result.inStock === 'boolean' ? result.inStock : null, httpStatus: result.status || null, snippet: result.snippet || null };
   }
 
   const oldPrice = typeof data.lastPrice === 'number' ? data.lastPrice : null;

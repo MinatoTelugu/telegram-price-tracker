@@ -135,6 +135,60 @@ async function pruneOldHistory(docRef) {
   }
 }
 
+/**
+ * Hosts that are pure redirectors for Flipkart app shares. Fetching these
+ * directly from a datacenter drops the connection, so they must be EXPANDED to
+ * the canonical product URL once and then cached.
+ */
+const FLIPKART_SHORT_HOSTS = /(^|\.)(dl\.flipkart\.com|fkrt\.cc|fkrt\.it)$/i;
+
+function isFlipkartShortLink(url) {
+  try {
+    const u = new URL(url);
+    if (FLIPKART_SHORT_HOSTS.test(u.hostname)) return true;
+    return u.hostname.endsWith('flipkart.com') && /^\/s\//i.test(u.pathname);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Expand a Flipkart app share link into a canonical product URL.
+ *
+ * Two routes, in order:
+ *   1. follow the redirect ourselves, reading Location headers (works for
+ *      fkrt.cc / fkrt.it, which are reachable);
+ *   2. convert the link through Cuelinks, then follow THAT — the converter's
+ *      redirector is not on flipkart.com, so it answers even when the store
+ *      itself refuses us. Reading its Location header gives the product URL
+ *      without ever fetching the store page.
+ *
+ * Returns null if it cannot be expanded.
+ */
+async function expandFlipkartShortLink(rawUrl) {
+  const { resolveShortUrl } = require('../lib/affiliate');
+
+  try {
+    const direct = await resolveShortUrl(rawUrl);
+    if (direct && !isFlipkartShortLink(direct)) return direct;
+  } catch (err) {
+    /* fall through to the converter route */
+  }
+
+  try {
+    const { convertAffiliateLink } = require('../lib/affiliate');
+    const conv = await convertAffiliateLink(rawUrl);
+    if (conv && conv.ok && conv.affiliateUrl && conv.affiliateUrl !== rawUrl) {
+      const viaConv = await resolveShortUrl(conv.affiliateUrl);
+      if (viaConv && !isFlipkartShortLink(viaConv)) return viaConv;
+    }
+  } catch (err) {
+    /* give up */
+  }
+
+  return null;
+}
+
 async function processProduct(doc) {
   const data = doc.data();
   // Pick the best URL to fetch. fetchUrl caches a canonical URL resolved on an
@@ -142,9 +196,19 @@ async function processProduct(doc) {
   // end from this host (it drops the connection), so prefer the converter's
   // redirector — following it lands on the real product page, which is what we
   // actually want to read.
-  const storedUrl = data.fetchUrl || data.cleanUrl || data.affiliateUrl;
-  const isDeadShortLink = /(^|\.)dl\.flipkart\.com|fkrt\.it/i.test(String(storedUrl || ''));
-  const url = isDeadShortLink && data.affiliateUrl ? data.affiliateUrl : storedUrl;
+  let url = data.fetchUrl || data.cleanUrl || data.affiliateUrl;
+
+  // A Flipkart app share link is a dead end from this host. Expand it to the
+  // canonical product URL once, and cache that as fetchUrl so every later run
+  // goes straight to the product page.
+  if (isFlipkartShortLink(url)) {
+    const expanded = await expandFlipkartShortLink(url);
+    if (expanded) {
+      url = expanded;
+      await doc.ref.set({ fetchUrl: expanded }, { merge: true });
+      console.log('cron: expanded short link for ' + doc.id + ' -> ' + expanded.slice(0, 90));
+    }
+  }
   const now = new Date();
 
   // Keep the stored affiliate link current. A product tracked before the
@@ -442,3 +506,6 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ ok: false, error: err.message }));
   }
 };
+
+// Exposed for tests.
+module.exports.isFlipkartShortLink = isFlipkartShortLink;

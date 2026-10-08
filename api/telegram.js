@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-45 (2026-10-08)';
+const BUILD = 'names-46 (2026-10-08)';
 const {
   convertAffiliateLink,
   resolveShortUrl,

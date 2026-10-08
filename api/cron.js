@@ -47,13 +47,42 @@ const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
 
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
-async function sendTelegramMessage(chatId, text) {
+const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
+
+/**
+ * The four actions that must ride along with EVERY alert, in the same 2x2 grid
+ * the tracking card uses:
+ *   [ ✅ Buy Now        ]  [ 🔴 Stop Tracking ]
+ *   [ 📊 Price History  ]  [ 🛍️ Today's Deals ]
+ *
+ * Built from the product record, so it works for a price drop, a price rise and
+ * a back-in-stock alert alike — and whether or not the page had an image.
+ */
+function alertKeyboard(docId, product) {
+  const buy = (product && (product.affiliateUrl || product.cleanUrl)) || null;
+  const row1 = [];
+  if (buy) row1.push({ text: '✅ Buy Now', url: buy });
+  row1.push({ text: '🔴 Stop Tracking', callback_data: 'untrack:' + docId });
+  const row2 = [
+    { text: '📊 Price History', callback_data: 'history:' + docId },
+    { text: "🛍️ Today's Deals", url: CHANNEL_URL },
+  ];
+  return { inline_keyboard: [row1, row2] };
+}
+
+async function sendTelegramMessage(chatId, text, replyMarkup) {
   const token = process.env.BOT_TOKEN;
   if (!token) return false;
   try {
     await axios.post(
       'https://api.telegram.org/bot' + token + '/sendMessage',
-      { chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true },
+      {
+        chat_id: chatId,
+        text,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      },
       { timeout: 10000 }
     );
     return true;
@@ -335,7 +364,7 @@ async function processProduct(doc) {
 
   if (message) {
     for (const chatId of subscribers) {
-      const sent = await sendTelegramMessage(chatId, message);
+      const sent = await sendTelegramMessage(chatId, message, alertKeyboard(doc.id, data));
       if (sent) alerted++;
     }
   }
@@ -509,3 +538,6 @@ module.exports = async (req, res) => {
 
 // Exposed for tests.
 module.exports.isFlipkartShortLink = isFlipkartShortLink;
+
+// Exposed for tests.
+module.exports.alertKeyboard = alertKeyboard;

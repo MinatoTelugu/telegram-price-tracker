@@ -27,6 +27,7 @@
  */
 
 const axios = require('axios');
+const crypto = require('crypto');
 const { discoverDealsDetailed } = require('../lib/deals');
 const { convertAffiliateLink } = require('../lib/affiliate');
 const { shortenUrl } = require('../lib/shorten');
@@ -85,6 +86,136 @@ function buildCaption(deal, link) {
   return lines.join('\n');
 }
 
+/**
+ * A stable fingerprint of a product's NAME. Two listings of the same scarf can
+ * have different ids (and even slightly different titles), which is exactly how
+ * the same product got posted twice back to back.
+ */
+function titleFingerprint(title) {
+  const NOISE = /\b(multicolor|multicolour|fancy|stylish|pack|of|for|with|and|the|new|latest|mss|fashion|buy|online|india|combo|set)\b/g;
+  const words = String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(NOISE, ' ')
+    .split(' ')
+    .filter((w) => w.length > 2);
+  if (!words.length) return null;
+  // SORT the words: "Scarf Stole Fancy Scarf" and "Stole Scarf Fancy Scarf" are
+  // the same product, and listing titles reorder words freely.
+  const canon = Array.from(new Set(words)).sort().join(' ');
+  return 'fp_' + crypto.createHash('sha1').update(canon).digest('hex').slice(0, 16);
+}
+
+/** men | women | null — from the product title. */
+function classifyGender(title) {
+  const t = ' ' + String(title || '').toLowerCase() + ' ';
+  if (/\b(women|womens|woman|girls|girl|ladies|female|her)\b/.test(t)) return 'women';
+  if (/\b(men|mens|man|boys|boy|male|gents|him)\b/.test(t)) return 'men';
+  return null;
+}
+
+/** Was this key posted within the last `hours`? */
+async function recentlyPosted(key, hours) {
+  if (!db || !key) return false;
+  try {
+    const snap = await db.collection(COLLECTIONS.DEALS_POSTED).doc(key).get();
+    if (!snap.exists) return false;
+    const d = snap.data() || {};
+    const at = d.postedAt && d.postedAt.toMillis ? d.postedAt.toMillis() : null;
+    if (!at) return true;
+    return Date.now() - at < hours * 3600 * 1000;
+  } catch (err) {
+    return false;
+  }
+}
+
+/** How many men's / women's items went out recently — the rolling ratio. */
+async function recentGenderCounts(limit = 12) {
+  if (!db) return { men: 0, women: 0 };
+  try {
+    const snap = await db
+      .collection(COLLECTIONS.DEALS_POSTED)
+      .orderBy('postedAt', 'desc')
+      .limit(limit)
+      .get();
+    let men = 0;
+    let women = 0;
+    for (const d of snap.docs) {
+      const g = (d.data() || {}).gender;
+      if (g === 'men') men++;
+      else if (g === 'women') women++;
+    }
+    return { men, women };
+  } catch (err) {
+    return { men: 0, women: 0 };
+  }
+}
+
+/**
+ * Order the candidates so that, counting from the recent history, roughly 80% of
+ * fashion posts are men's and 20% women's. A greedy pick: at each step choose
+ * the gender that is furthest BELOW its target share, so a run can never drift
+ * into back-to-back women's posts.
+ */
+function orderForRatio(deals, recent, maxPerRun) {
+  const WOMEN_SHARE = 0.2;
+  const pool = { men: [], women: [], other: [] };
+  for (const d of deals) {
+    const g = classifyGender(d.title);
+    pool[g === 'men' ? 'men' : g === 'women' ? 'women' : 'other'].push(d);
+  }
+
+  const out = [];
+  // Target for THIS run: 8 men to every 2 women.
+  const targetWomen = Math.max(1, Math.round(maxPerRun * WOMEN_SHARE));
+  // If the channel is already over its women quota, do not open with one.
+  const overWomen = (recent.women || 0) > (recent.men || 0) * (WOMEN_SHARE / (1 - WOMEN_SHARE));
+
+  let womenPicked = 0;
+  for (let i = 0; i < maxPerRun; i++) {
+    // Spread the women's slots evenly through the run.
+    const stride = Math.max(2, Math.round(maxPerRun / targetWomen));
+    const womenSlot = womenPicked < targetWomen && (i + 1) % stride === 0;
+    const allowWomen = womenSlot && pool.women.length && !(i === 0 && overWomen);
+
+    if (allowWomen) {
+      out.push(pool.women.shift());
+      womenPicked++;
+    } else if (pool.men.length) {
+      out.push(pool.men.shift());
+    } else if (pool.women.length && womenPicked < targetWomen) {
+      out.push(pool.women.shift());
+      womenPicked++;
+    } else if (pool.other.length) {
+      out.push(pool.other.shift());
+    } else {
+      break;
+    }
+  }
+  return out;
+}
+
+/** The product photo, fetched from the product page when the card had none. */
+async function imageFromProductPage(url) {
+  if (!url) return null;
+  try {
+    const res = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' },
+      timeout: 2500,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      responseType: 'text',
+    });
+    const html = typeof res.data === 'string' ? res.data : '';
+    const m = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+              html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    if (m && /^https?:\/\//i.test(m[1])) return m[1].replace(/^http:/i, 'https:');
+  } catch (err) {
+    /* no image available */
+  }
+  return null;
+}
+
 async function alreadyPosted(id) {
   if (!db) return false;
   try {
@@ -101,6 +232,7 @@ async function markPosted(id, deal) {
     await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).set(
       {
         title: deal.title,
+        gender: classifyGender(deal.title),
         url: deal.url,
         price: deal.price,
         mrp: deal.mrp,
@@ -186,11 +318,29 @@ async function postToChannel(deal, link) {
     console.log('deals: no image for ' + deal.id + ' — sending text with a link preview');
   }
 
+  // Action buttons on every post.
+  const reply_markup = {
+    inline_keyboard: [
+      [{ text: '🛒 Buy Now', url: link }],
+      [{ text: '🔥 More Deals', url: CHANNEL_URL }],
+    ],
+  };
+
+  // No image on the card? Fetch the product page and take its og:image, so the
+  // post is a photo card rather than a bare link preview.
+  if (!deal.imageUrl && deal.url) {
+    const fetched = await imageFromProductPage(deal.url);
+    if (fetched) {
+      deal.imageUrl = fetched;
+      console.log('deals: fetched og:image for ' + deal.id);
+    }
+  }
+
   if (deal.imageUrl) {
     try {
       await axios.post(
         api + 'sendPhoto',
-        { chat_id: channelId(), photo: deal.imageUrl, caption, parse_mode: 'HTML' },
+        { chat_id: channelId(), photo: deal.imageUrl, caption, parse_mode: 'HTML', reply_markup },
         { timeout: 15000 }
       );
       console.log('deals: sent as a PHOTO — ' + String(deal.imageUrl).slice(0, 70));
@@ -204,7 +354,7 @@ async function postToChannel(deal, link) {
   try {
     await axios.post(
       api + 'sendMessage',
-      { chat_id: channelId(), text: caption, parse_mode: 'HTML', disable_web_page_preview: false },
+      { chat_id: channelId(), text: caption, parse_mode: 'HTML', disable_web_page_preview: false, reply_markup },
       { timeout: 15000 }
     );
     return true;
@@ -305,11 +455,30 @@ module.exports = async (req, res) => {
 
     const posted = [];
     const skipped = [];
-    for (const deal of deals) {
+
+    // Enforce the 80/20 men/women ratio, counting what has gone out recently, so
+    // a run can never drift into back-to-back women's posts.
+    const recent = await recentGenderCounts(12);
+    const ordered = orderForRatio(deals, recent, MAX_PER_RUN * 3);
+    console.log(
+      'deals: ratio — recent men=' + recent.men + ' women=' + recent.women +
+        ', ordered ' + ordered.length + ' candidate(s) for a 80/20 mix'
+    );
+
+    for (const deal of ordered) {
       if (posted.length >= MAX_PER_RUN) break;
 
       if (await alreadyPosted(deal.id)) {
         skipped.push({ id: deal.id, reason: 'already_posted' });
+        continue;
+      }
+
+      // Same PRODUCT under a different listing id / slightly different title:
+      // never repost it within 48 hours.
+      const fp = titleFingerprint(deal.title);
+      if (fp && (await recentlyPosted(fp, 48))) {
+        skipped.push({ id: deal.id, reason: 'duplicate_title', fingerprint: fp });
+        console.log('deals: skipped a duplicate title — ' + String(deal.title).slice(0, 60));
         continue;
       }
 
@@ -328,6 +497,10 @@ module.exports = async (req, res) => {
         console.log('deals: posting "' + String(deal.title).slice(0, 60) + '" (' + deal.discount + '% off) -> ' + shortLink);
         await postToChannel(deal, shortLink);
         await markPosted(deal.id, deal);
+        // Record the title fingerprint as well, so a re-listed duplicate is
+        // caught even though its id differs.
+        const fpKey = titleFingerprint(deal.title);
+        if (fpKey) await markPosted(fpKey, deal);
         posted.push({ id: deal.id, title: deal.title, discount: deal.discount, link: shortLink });
         console.log('deals: posted ok — total so far ' + posted.length);
       } catch (err) {
@@ -369,3 +542,8 @@ module.exports = async (req, res) => {
     res.end(JSON.stringify({ ok: false, error: err.message }));
   }
 };
+
+// Exposed for tests.
+module.exports.titleFingerprint = titleFingerprint;
+module.exports.classifyGender = classifyGender;
+module.exports.orderForRatio = orderForRatio;

@@ -238,8 +238,9 @@
     document.getElementById('pTitle').textContent = p.title || p.productId || id;
     document.getElementById('pMeta').textContent = (p.productId || '');
     document.getElementById('pPrice').textContent = money(last, cur);
-    document.getElementById('sLow').textContent = money(low, cur);
-    document.getElementById('sHigh').textContent = money(high, cur);
+    var flat = low != null && high != null && low === high;
+    document.getElementById('sLow').textContent = flat ? money(low, cur) + ' (no drop yet)' : money(low, cur);
+    document.getElementById('sHigh').textContent = flat ? money(high, cur) + ' (steady)' : money(high, cur);
     document.getElementById('sPts').textContent = String(hist.length);
     document.getElementById('iStore').textContent = p.marketplace || '—';
     document.getElementById('iId').textContent = p.productId || '—';
@@ -256,6 +257,9 @@
     if (hist.length < 2 || low == null || high == null) {
       v.className = 'verdict mid';
       v.innerHTML = '<b>Not enough data yet</b>Keep tracking \u2014 a verdict appears once a few price points are recorded.';
+    } else if (low === high) {
+      v.className = 'verdict mid';
+      v.innerHTML = '<b>Price has been steady</b>Every price we have recorded so far is ' + money(last, cur) + '. A buy verdict appears once the price moves.';
     } else if (last <= low * 1.02) {
       v.className = 'verdict good';
       v.innerHTML = '<b>Good time to buy</b>The current price is at or near its lowest in the last 30 days.';
@@ -271,6 +275,13 @@
 
     // ---- graph ----
     if (!hist.length) { hide(document.querySelector('.chart-box')); show(document.getElementById('chartEmpty')); return; }
+    if (typeof Chart === 'undefined') {
+      // The CDN was unreachable — show the numbers rather than an empty card.
+      document.querySelector('.chart-box').innerHTML =
+        '<div class="empty">Chart library could not load. ' + hist.length +
+        ' price point(s): ' + prices.map(function (x) { return money(x, cur); }).join(' → ') + '</div>';
+      return;
+    }
     var labels = hist.map(function (h) {
       if (!h.t) return '';
       return new Date(h.t).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });

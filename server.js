@@ -106,6 +106,13 @@ function loadJob(name) {
 
 /** Run a serverless handler as a normal function. */
 function callHandler(handler, headers) {
+  // Internal calls MUST authenticate the same way cron-job.org does. Otherwise,
+  // the moment CRON_SECRET is set the endpoint answers 401 to its own timer,
+  // and every scheduled run silently does nothing.
+  const merged = Object.assign({ host: 'localhost' }, headers || {});
+  if (process.env.CRON_SECRET && !merged.authorization) {
+    merged.authorization = 'Bearer ' + process.env.CRON_SECRET;
+  }
   return new Promise((resolve) => {
     const res = {
       statusCode: 200,
@@ -114,7 +121,7 @@ function callHandler(handler, headers) {
         resolve({ statusCode: this.statusCode, body });
       },
     };
-    Promise.resolve(handler({ method: 'GET', headers: headers || {}, query: {}, url: '/' }, res)).catch(
+    Promise.resolve(handler({ method: 'GET', headers: merged, query: {}, url: '/' }, res)).catch(
       (err) => resolve({ statusCode: 500, body: String((err && err.message) || err) })
     );
   });

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-39 (2026-10-08)';
+const BUILD = 'names-40 (2026-10-08)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -598,6 +598,15 @@ function buildTrackKeyboard(docId, result) {
   return Markup.inlineKeyboard(rows);
 }
 
+/**
+ * Headers for an INTERNAL call to our own cron endpoints. They must carry the
+ * same bearer token cron-job.org sends, or the endpoint answers 401 to itself
+ * once CRON_SECRET is configured.
+ */
+function internalCronHeaders() {
+  return process.env.CRON_SECRET ? { authorization: 'Bearer ' + process.env.CRON_SECRET } : {};
+}
+
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
 function tsToDate(ts) {
   try {
@@ -720,7 +729,7 @@ function registerHandlers(bot) {
     try {
       const cronFn = require('./cron');
       await cronFn(
-        { method: 'GET', headers: {}, query: {} },
+        { method: 'GET', headers: internalCronHeaders(), query: {} },
         { statusCode: 0, setHeader() {}, end() {} }
       );
       console.log('price check: opportunistic run complete (' + reason + ')');
@@ -1167,7 +1176,7 @@ function registerHandlers(bot) {
       let body = '';
       const cronFn = require('./cron');
       await cronFn(
-        { method: 'GET', headers: {}, query: {} },
+        { method: 'GET', headers: internalCronHeaders(), query: {} },
         { statusCode: 0, setHeader() {}, end(b) { body = b; } }
       );
 
@@ -1179,6 +1188,13 @@ function registerHandlers(bot) {
       }
       if (!summary) {
         await ctx.reply('The check ran but returned nothing readable.');
+        return;
+      }
+      if (summary.ok === false) {
+        await ctx.reply(
+          '❌ <b>The price check FAILED</b>\n\n' + escapeHtml(String(summary.error || 'unknown')),
+          { parse_mode: 'HTML' }
+        );
         return;
       }
 

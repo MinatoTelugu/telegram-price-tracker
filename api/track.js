@@ -66,6 +66,10 @@ module.exports = async (req, res) => {
           imageUrl: data.imageUrl || null,
           currency: data.currency || 'INR',
           lastPrice: data.lastPrice != null ? data.lastPrice : null,
+          mrp: data.mrp != null ? data.mrp : null,
+          inStock: typeof data.inStock === 'boolean' ? data.inStock : null,
+          lastCheckedAt:
+            data.lastCheckedAt && data.lastCheckedAt.toMillis ? data.lastCheckedAt.toMillis() : null,
           affiliateUrl: data.affiliateUrl || null,
           cleanUrl: data.cleanUrl || null,
         },

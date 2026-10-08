@@ -2,310 +2,487 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Price History</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Price History — Ai Price Alert Bot</title>
+<meta name="description" content="Track the ups and downs of product prices on Amazon and Flipkart." />
 <link rel="icon" href="/logo.jpg" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
   :root{
-    --bg:#0e1116; --card:#161a22; --card2:#1b202a; --line:#262c38;
-    --txt:#e9ecf1; --muted:#98a2b3; --accent:#22c55e; --accent2:#4f9cf9;
-    --red:#f87171; --amber:#fbbf24;
+    --page:#f4f6f9;
+    --card:#ffffff;
+    --line:#e7eaf0;
+    --ink:#0f1b2d;
+    --muted:#6b7787;
+    --blue:#1f6feb;
+    --blue-dark:#1558c0;
+    --teal:#0f9d8f;
+    --red:#e5484d;
+    --amber:#e8a317;
+    --green:#12a150;
+    --radius:20px;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);
-       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-  .wrap{width:100%;max-width:780px;margin:0 auto;padding:18px 16px 56px}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--page); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:96px; /* room for the sticky bar */
+  }
+  .wrap{width:100%;max-width:820px;margin:0 auto;padding:20px 16px 32px}
 
-  header.top{display:flex;align-items:center;gap:12px;padding:6px 0 18px}
-  header.top img{width:44px;height:44px;border-radius:12px;object-fit:cover}
-  header.top h1{font-size:19px;margin:0;font-weight:700}
-  header.top p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+  /* ---------- header ---------- */
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .brand img{width:46px;height:46px;border-radius:14px;object-fit:cover;box-shadow:0 2px 10px rgba(15,27,45,.10)}
+  .brand h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.01em}
+  .brand p{margin:3px 0 0;font-size:12.5px;color:var(--muted)}
 
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px}
-  .card h2{font-size:14px;margin:0 0 10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  /* ---------- cards ---------- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+        padding:18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(15,27,45,.05),0 8px 24px rgba(15,27,45,.04)}
+  .card > h2{font-size:15px;margin:0 0 14px;font-weight:800;letter-spacing:-.01em}
+  .eyebrow{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
 
+  /* ---------- search ---------- */
   .search{display:flex;gap:10px;flex-wrap:wrap}
-  .search input{flex:1 1 240px;background:var(--card2);border:1px solid var(--line);color:var(--txt);
-                border-radius:10px;padding:12px 14px;font-size:14px;outline:none}
-  .search input:focus{border-color:var(--accent2)}
-  .search button{background:var(--accent2);color:#08121f;border:0;border-radius:10px;padding:12px 18px;
-                 font-weight:700;font-size:14px;cursor:pointer}
-  .hint{font-size:12px;color:var(--muted);margin-top:10px}
-  .hint b{color:var(--txt)}
+  .search input{flex:1 1 220px;min-width:0;border:1px solid var(--line);background:#fbfcfe;border-radius:14px;
+                padding:13px 14px;font-size:15px;color:var(--ink);outline:none}
+  .search input:focus{border-color:var(--blue);background:#fff}
+  .search button{background:var(--blue);color:#fff;border:0;border-radius:14px;padding:13px 22px;
+                 font-weight:700;font-size:15px;cursor:pointer}
+  .search button:active{background:var(--blue-dark)}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:11px}
 
-  .phead{display:flex;gap:14px;align-items:flex-start}
-  .phead img{width:78px;height:78px;border-radius:12px;object-fit:contain;background:#0b0e13;border:1px solid var(--line)}
-  .ptitle{font-size:16px;font-weight:700;line-height:1.35;margin:0}
-  .pmeta{font-size:12px;color:var(--muted);margin-top:4px}
-  .price{font-size:30px;font-weight:800;margin:12px 0 2px}
-  .mrp{color:var(--muted);text-decoration:line-through;font-size:15px;margin-left:8px}
-  .off{background:rgba(34,197,94,.15);color:var(--accent);border-radius:8px;padding:3px 8px;font-size:12px;
-       font-weight:700;margin-left:8px}
+  /* ---------- product ---------- */
+  .prod{display:flex;gap:16px;align-items:flex-start}
+  .prod .pic{width:104px;height:104px;flex:0 0 104px;border-radius:16px;background:#f7f8fa;
+             border:1px solid var(--line);object-fit:contain;padding:6px}
+  .prod .info{min-width:0;flex:1}
+  .store{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;
+         letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .ptitle{font-size:17px;font-weight:800;line-height:1.35;margin:8px 0 0;word-break:break-word}
+  .pmeta{font-size:12.5px;color:var(--muted);margin-top:6px;word-break:break-all}
+  .stars{font-size:14px;letter-spacing:1px;color:var(--amber);margin-top:8px}
+  .stars span{color:#d7dbe2}
 
-  .verdict{margin-top:14px;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5;border:1px solid var(--line)}
-  .verdict.good{background:rgba(34,197,94,.10);border-color:rgba(34,197,94,.35)}
-  .verdict.bad{background:rgba(248,113,113,.10);border-color:rgba(248,113,113,.35)}
-  .verdict.mid{background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.35)}
-  .verdict b{display:block;margin-bottom:4px;font-size:13px}
+  .priceline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .price{font-size:30px;font-weight:800;letter-spacing:-.02em}
+  .mrp{font-size:15px;color:var(--muted);text-decoration:line-through}
+  .off{font-size:12.5px;font-weight:800;color:var(--green);background:rgba(18,161,80,.10);
+       border-radius:999px;padding:4px 10px}
+  .oos{font-size:12.5px;font-weight:800;color:var(--red);background:rgba(229,72,77,.10);
+       border-radius:999px;padding:4px 10px}
 
-  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:14px}
-  .stat{flex:1 1 150px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
-  .stat .k{color:var(--muted);font-size:12px}
-  .stat .v{font-size:18px;font-weight:700;margin-top:3px}
+  .buybtn{display:block;width:100%;text-align:center;text-decoration:none;background:var(--blue);color:#fff;
+          border-radius:16px;padding:15px 18px;font-weight:800;font-size:16px;margin-top:16px}
+  .buybtn:active{background:var(--blue-dark)}
 
-  .chart-box{position:relative;height:300px;margin-top:6px}
+  /* ---------- 3-column stats ---------- */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+  .stat{background:#fbfcfe;border:1px solid var(--line);border-radius:14px;padding:12px}
+  .stat .k{font-size:11.5px;color:var(--muted);font-weight:700}
+  .stat .v{font-size:16px;font-weight:800;margin-top:5px;word-break:break-word}
+  .stat.lo .v{color:var(--green)}
+  .stat.hi .v{color:var(--red)}
 
-  .cta{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
-  .btn{flex:1 1 160px;text-align:center;text-decoration:none;border-radius:12px;padding:14px 18px;font-weight:700;font-size:14px}
-  .btn.buy{background:var(--accent);color:#04180c}
-  .btn.visit{background:transparent;color:var(--txt);border:1px solid var(--line)}
+  /* ---------- decision ---------- */
+  .gauge{position:relative;margin:6px 0 4px;padding-top:26px}
+  .gauge .track{height:10px;border-radius:999px;
+    background:linear-gradient(90deg,#e5484d 0%,#f0803c 28%,#e8a317 52%,#39a86f 76%,#12a150 100%)}
+  .gauge .knob{position:absolute;top:14px;width:22px;height:22px;border-radius:50%;background:#fff;
+               border:3px solid var(--ink);transform:translateX(-50%);box-shadow:0 2px 8px rgba(15,27,45,.25)}
+  .gauge .labels{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:700;margin-top:10px}
+  .gauge .labels b{color:var(--ink)}
+  .explain{font-size:13.5px;line-height:1.6;color:var(--muted);margin:14px 0 0}
 
-  .info dl{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;margin:0;font-size:13px}
-  .info dt{color:var(--muted)}
-  .info dd{margin:0;text-align:right}
+  /* ---------- chart ---------- */
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);font-weight:700;margin-bottom:10px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .chartctl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .iconbtn{border:1px solid var(--line);background:#fbfcfe;color:var(--ink);border-radius:11px;
+           padding:8px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
+  .iconbtn:active{background:#eef1f6}
+  .chart-box{position:relative;height:300px}
+  .empty{font-size:13px;color:var(--muted);padding:18px 0;line-height:1.6}
+  .ranges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;justify-content:center}
+  .range{border:1px solid var(--line);background:#fbfcfe;color:var(--muted);border-radius:999px;
+         padding:8px 15px;font-size:12.5px;font-weight:800;cursor:pointer}
+  .range.active{background:var(--blue);border-color:var(--blue);color:#fff}
 
-  footer{margin-top:22px;text-align:center;color:var(--muted);font-size:12px;line-height:1.7}
-  footer a{color:var(--muted);text-decoration:none;margin:0 8px}
-  .err{color:var(--red)}
-  .center{text-align:center;padding:28px 0;color:var(--muted)}
-  .hidden{display:none}
+  /* ---------- sticky mobile buy bar ---------- */
+  .sticky{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:12px;
+          padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+          background:rgba(255,255,255,.97);border-top:1px solid var(--line);
+          box-shadow:0 -6px 24px rgba(15,27,45,.10);z-index:40}
+  .sticky .share{width:46px;height:46px;flex:0 0 46px;border-radius:14px;border:1px solid var(--line);
+                 background:#fbfcfe;font-size:19px;cursor:pointer;line-height:1}
+  .sticky a.buybtn{margin:0;flex:1;padding:14px 16px;font-size:15.5px}
+  @media (max-width:640px){ .sticky{display:flex} .card .buybtn.in-card{display:none} }
+  @media (max-width:400px){
+    .prod .pic{width:88px;height:88px;flex:0 0 88px}
+    .price{font-size:26px}
+    .stats{grid-template-columns:repeat(3,1fr);gap:8px}
+    .stat{padding:10px}
+    .stat .v{font-size:14px}
+    .chart-box{height:250px}
+    .wrap{padding:16px 14px 28px}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <header class="top">
-    <img src="/logo.jpg" alt="Ai Price Alert Bot" onerror="this.style.display='none'" />
+  <div class="brand">
+    <img src="/logo.jpg" alt="Ai Price Alert Bot" />
     <div>
       <h1>Price History</h1>
       <p>Track the ups and downs of product prices</p>
     </div>
-  </header>
-
-  <div class="card">
-    <h2>Find a product's price history</h2>
-    <div class="search">
-      <input id="linkInput" type="text" placeholder="Paste an Amazon or Flipkart product link" />
-      <button id="goBtn">Check</button>
-    </div>
-    <div class="hint">Supported: <b>Amazon</b> and <b>Flipkart</b>. Paste a product link and tap Check.</div>
-    <div id="searchMsg" class="hint err hidden"></div>
   </div>
 
-  <div id="loading" class="card center">Loading price history…</div>
+  <div class="card">
+    <p class="eyebrow">Find a product&rsquo;s price history</p>
+    <div class="search">
+      <input id="q" type="url" inputmode="url" autocomplete="off"
+             placeholder="Paste an Amazon or Flipkart product link" aria-label="Product link" />
+      <button id="go" type="button">Check</button>
+    </div>
+    <p class="hint">Supported: <b>Amazon</b> and <b>Flipkart</b>. Paste a product link and tap Check.</p>
+  </div>
 
-  <div id="result" class="hidden">
+  <div id="msg"></div>
+
+  <div id="result" style="display:none">
+
+    <!-- product -->
     <div class="card">
-      <div class="phead">
-        <img id="pImg" alt="" class="hidden" />
-        <div style="flex:1">
-          <h2 style="margin-bottom:6px" id="pMarket">Product</h2>
-          <p class="ptitle" id="pTitle">—</p>
+      <div class="prod">
+        <img class="pic" id="pImg" alt="" />
+        <div class="info">
+          <div class="store" id="pMarket"></div>
+          <h2 class="ptitle" id="pTitle"></h2>
+          <div class="stars" id="pStars" style="display:none"></div>
           <div class="pmeta" id="pMeta"></div>
         </div>
       </div>
-      <div class="price"><span id="pPrice">—</span><span class="mrp hidden" id="pMrp"></span><span class="off hidden" id="pOff"></span></div>
-      <div id="verdict" class="verdict hidden"></div>
-      <div class="row">
-        <div class="stat"><div class="k">Lowest (30 days)</div><div class="v" id="sLow">—</div></div>
-        <div class="stat"><div class="k">Highest (30 days)</div><div class="v" id="sHigh">—</div></div>
-        <div class="stat"><div class="k">Data points</div><div class="v" id="sPts">0</div></div>
+
+      <div class="priceline">
+        <div class="price" id="pPrice">—</div>
+        <div class="mrp" id="pMrp" style="display:none"></div>
+        <div class="off" id="pOff" style="display:none"></div>
+        <div class="oos" id="pOos" style="display:none">Out of stock</div>
       </div>
-      <div class="cta">
-        <a class="btn buy" id="buyBtn" href="#" target="_blank" rel="noopener">Buy now</a>
-        <a class="btn visit" id="visitBtn" href="#" target="_blank" rel="noopener">Visit store</a>
+
+      <a class="buybtn in-card" id="buyBtn" href="#" target="_blank" rel="noopener">Buy now</a>
+
+      <div class="stats">
+        <div class="stat hi"><div class="k">Highest</div><div class="v" id="sHigh">—</div></div>
+        <div class="stat"><div class="k">Average</div><div class="v" id="sAvg">—</div></div>
+        <div class="stat lo"><div class="k">Lowest</div><div class="v" id="sLow">—</div></div>
       </div>
+      <div class="pmeta" id="updated" style="margin-top:12px"></div>
     </div>
 
+    <!-- decision -->
     <div class="card">
-      <h2>Price history graph</h2>
-      <div class="chart-box"><canvas id="chart"></canvas></div>
-      <div id="chartEmpty" class="center hidden">No price points recorded yet. Check back after the next scheduled run.</div>
+      <h2>Should you buy at this price?</h2>
+      <div class="gauge">
+        <div class="track"></div>
+        <div class="knob" id="knob" style="left:50%"></div>
+        <div class="labels"><span>Skip</span><span>Wait</span><span>Okay</span><span><b>Yes</b></span></div>
+      </div>
+      <p class="explain" id="explain"></p>
     </div>
 
-    <div class="card info">
-      <h2>Additional product info</h2>
-      <dl>
-        <dt>Store</dt><dd id="iStore">—</dd>
-        <dt>Product ID</dt><dd id="iId">—</dd>
-        <dt>Currency</dt><dd id="iCur">—</dd>
-      </dl>
+    <!-- chart -->
+    <div class="card">
+      <h2>Price History Graph</h2>
+      <div class="legend">
+        <span><i style="background:var(--red)"></i>Offer Price</span>
+        <span><i style="background:var(--teal)"></i>Prices</span>
+      </div>
+      <div class="chartctl">
+        <button class="iconbtn" id="fs" type="button" aria-label="Fullscreen">⛶ Fullscreen</button>
+        <button class="iconbtn" id="dl" type="button" aria-label="Download chart">⭳ Download</button>
+        <button class="iconbtn" id="cp" type="button" aria-label="Copy chart image">⧉ Copy</button>
+      </div>
+      <div class="chart-box" id="chartBox"><canvas id="chart" aria-label="Price history chart"></canvas></div>
+      <div class="empty" id="chartEmpty" style="display:none">No price points recorded yet — check back after the next scheduled run.</div>
+      <div class="ranges" id="ranges">
+        <button class="range active" data-r="all" type="button">All</button>
+        <button class="range" data-r="1y" type="button">1Y</button>
+        <button class="range" data-r="6m" type="button">6M</button>
+        <button class="range" data-r="3m" type="button">3M</button>
+        <button class="range" data-r="1m" type="button">1M</button>
+        <button class="range" data-r="reset" type="button">Reset</button>
+      </div>
     </div>
+
   </div>
+</div>
 
-  <div id="error" class="card center err hidden"></div>
-
-  <footer>
-    <div>
-      <a href="https://t.me/Ai_PriceAlert" target="_blank" rel="noopener">Telegram channel</a>
-      <a href="https://aipricealertbot.vercel.app/api/telegram" target="_blank" rel="noopener">Status</a>
-    </div>
-    <div style="margin-top:8px">Ai Price Alert Bot — price tracking for Amazon &amp; Flipkart</div>
-  </footer>
+<div class="sticky">
+  <button class="share" id="shareBtn" type="button" aria-label="Share this page">↗</button>
+  <a class="buybtn" id="buyBtn2" href="#" target="_blank" rel="noopener">Buy now</a>
 </div>
 
 <script>
 (function () {
-  var params = new URLSearchParams(location.search);
-  var id = params.get('id');
+  var $ = function (id) { return document.getElementById(id); };
+  var API = '/api/track?id=';
+  var state = { history: [], currency: 'INR', chart: null, range: 'all' };
 
+  function show(el) { if (el) el.style.display = ''; }
+  function hide(el) { if (el) el.style.display = 'none'; }
   function money(n, cur) {
-    if (n == null) return '—';
-    var sym = cur === 'INR' ? '\u20B9' : '';
+    if (n == null || isNaN(n)) return '—';
+    var sym = (cur === 'INR' || !cur) ? '₹' : '';
     return sym + Number(n).toLocaleString('en-IN');
   }
-  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-  function show(el) { el.classList.remove('hidden'); }
-  function hide(el) { el.classList.add('hidden'); }
-
-  // ---- search box: derive our product id from a pasted link ----
-  function idFromLink(link) {
-    var raw = String(link || '').trim();
-    if (!raw) return null;
-    if (!/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
-    var u;
-    try { u = new URL(raw); } catch (e) { return null; }
-    var host = u.hostname.toLowerCase();
-    if (host.indexOf('amazon') !== -1) {
-      var m = u.href.match(/\/(?:dp|gp\/product|gp\/aw\/d|d|product|ASIN)\/([A-Z0-9]{10})/i) ||
-              u.href.match(/[?&](?:asin|ASIN)=([A-Z0-9]{10})/);
-      return m ? 'amazon_' + m[1].toUpperCase() : null;
-    }
-    if (host.indexOf('flipkart') !== -1) {
-      var pid = u.searchParams.get('pid');
-      var m2 = u.pathname.match(/\/p\/(itm[a-z0-9]{6,})/i);
-      var got = pid || (m2 ? m2[1] : null);
-      return got ? 'flipkart_' + got : null;
-    }
+  function stamp(ms) {
+    if (!ms) return '';
+    try {
+      return new Date(ms).toLocaleString('en-IN',
+        { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  }
+  function storeName(m) {
+    if (m === 'amazon') return 'Amazon';
+    if (m === 'flipkart') return 'Flipkart';
+    return m ? (m.charAt(0).toUpperCase() + m.slice(1)) : 'Product';
+  }
+  function note(text, kind) {
+    var el = $('msg');
+    el.innerHTML = text
+      ? '<div class="card" style="border-color:' + (kind === 'bad' ? 'rgba(229,72,77,.4)' : 'var(--line)') + '">' +
+        '<div class="explain" style="margin:0;color:' + (kind === 'bad' ? 'var(--red)' : 'var(--ink)') + '">' + text + '</div></div>'
+      : '';
+  }
+  function idFromInput(v) {
+    v = (v || '').trim();
+    var m = v.match(/[?&]id=([a-z]+_[A-Za-z0-9]+)/);
+    if (m) return m[1];
+    if (/^[a-z]+_[A-Za-z0-9]+$/.test(v)) return v;
     return null;
   }
 
-  document.getElementById('goBtn').addEventListener('click', function () {
-    var msg = document.getElementById('searchMsg');
-    var got = idFromLink(document.getElementById('linkInput').value);
-    if (!got) {
-      msg.textContent = 'That does not look like an Amazon or Flipkart product link.';
-      show(msg);
-      return;
-    }
-    location.search = '?id=' + encodeURIComponent(got);
-  });
-  document.getElementById('linkInput').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') document.getElementById('goBtn').click();
-  });
-
-  if (!id) {
-    hide(document.getElementById('loading'));
-    var er = document.getElementById('error');
-    er.innerHTML = 'Paste a product link above, or open this page from the bot\u2019s \u201cPrice History\u201d button.';
-    show(er);
-    return;
+  // ---- load -----------------------------------------------------------------
+  function load(id) {
+    note('');
+    fetch(API + encodeURIComponent(id))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) {
+          note('Could not find that product. It may not be tracked yet — send the link to the bot first.', 'bad');
+          return;
+        }
+        render(id, d.product || {}, d.history || []);
+      })
+      .catch(function () { note('Could not load the price history just now. Please try again.', 'bad'); });
   }
 
-  fetch('/api/track?id=' + encodeURIComponent(id))
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      hide(document.getElementById('loading'));
-      if (!data.ok) {
-        var e2 = document.getElementById('error');
-        e2.innerHTML = 'No price history for this product yet.<br><br>Send the link to the bot on Telegram first, and I will start tracking it.';
-        show(e2);
-        return;
-      }
-      render(data);
-    })
-    .catch(function () {
-      hide(document.getElementById('loading'));
-      var e3 = document.getElementById('error');
-      e3.textContent = 'Network error while loading price history.';
-      show(e3);
-    });
-
-  function render(data) {
-    var p = data.product || {};
-    var hist = (data.history || []).filter(function (h) { return h.price != null; });
+  // ---- render ---------------------------------------------------------------
+  function render(id, p, hist) {
     var cur = p.currency || 'INR';
+    state.history = hist;
+    state.currency = cur;
+
+    show($('result'));
+
+    // image (hidden when the page gave us none)
+    if (p.imageUrl) { $('pImg').src = p.imageUrl; $('pImg').alt = p.title || 'Product image'; show($('pImg')); }
+    else { hide($('pImg')); }
+
+    $('pMarket').textContent = storeName(p.marketplace);
+    $('pTitle').textContent = p.title || p.productId || id;
+    $('pMeta').textContent = p.productId ? ('ID ' + p.productId) : '';
+
     var last = p.lastPrice != null ? p.lastPrice : (hist.length ? hist[hist.length - 1].price : null);
-    var prices = hist.map(function (h) { return h.price; });
-    var low = prices.length ? Math.min.apply(null, prices) : null;
-    var high = prices.length ? Math.max.apply(null, prices) : null;
 
-    show(document.getElementById('result'));
-
-    if (p.imageUrl) { var im = document.getElementById('pImg'); im.src = p.imageUrl; show(im); }
-    document.getElementById('pMarket').textContent = p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : (p.marketplace || 'Product'));
-    document.getElementById('pTitle').textContent = p.title || p.productId || id;
-    document.getElementById('pMeta').textContent = (p.productId || '');
-    document.getElementById('pPrice').textContent = money(last, cur);
-    var flat = low != null && high != null && low === high;
-    document.getElementById('sLow').textContent = flat ? money(low, cur) + ' (no drop yet)' : money(low, cur);
-    document.getElementById('sHigh').textContent = flat ? money(high, cur) + ' (steady)' : money(high, cur);
-    document.getElementById('sPts').textContent = String(hist.length);
-    document.getElementById('iStore').textContent = p.marketplace || '—';
-    document.getElementById('iId').textContent = p.productId || '—';
-    document.getElementById('iCur').textContent = cur;
+    // price / MRP / discount — only what the data actually says
+    $('pPrice').textContent = money(last, cur);
+    if (p.mrp != null && last != null && p.mrp > last) {
+      $('pMrp').textContent = money(p.mrp, cur); show($('pMrp'));
+      var off = Math.round(((p.mrp - last) / p.mrp) * 100);
+      $('pOff').textContent = off + '% Off'; show($('pOff'));
+    } else { hide($('pMrp')); hide($('pOff')); }
+    if (p.inStock === false) show($('pOos')); else hide($('pOos'));
 
     var buy = p.affiliateUrl || p.cleanUrl || '#';
-    document.getElementById('buyBtn').href = buy;
-    document.getElementById('visitBtn').href = p.cleanUrl || buy;
-    document.getElementById('buyBtn').textContent = 'Buy in ' + (p.marketplace === 'amazon' ? 'Amazon' : (p.marketplace === 'flipkart' ? 'Flipkart' : 'store'));
-    document.getElementById('visitBtn').textContent = 'Visit store';
+    var label = 'Buy @ ' + storeName(p.marketplace).toLowerCase() + '.com';
+    $('buyBtn').href = buy; $('buyBtn').textContent = label;
+    $('buyBtn2').href = buy; $('buyBtn2').textContent = label;
 
-    // ---- "Is it a right time to buy?" verdict ----
-    var v = document.getElementById('verdict');
-    if (hist.length < 2 || low == null || high == null) {
-      v.className = 'verdict mid';
-      v.innerHTML = '<b>Not enough data yet</b>Keep tracking \u2014 a verdict appears once a few price points are recorded.';
+    $('updated').textContent = p.lastCheckedAt ? ('Last updated ' + stamp(p.lastCheckedAt)) : '';
+
+    // stats from the REAL history
+    var prices = hist.map(function (h) { return h.price; }).filter(function (x) { return typeof x === 'number'; });
+    var low = prices.length ? Math.min.apply(null, prices) : null;
+    var high = prices.length ? Math.max.apply(null, prices) : null;
+    var avg = prices.length ? Math.round(prices.reduce(function (a, b) { return a + b; }, 0) / prices.length) : null;
+    $('sLow').textContent = money(low, cur);
+    $('sHigh').textContent = money(high, cur);
+    $('sAvg').textContent = money(avg, cur);
+
+    // ---- decision: derived from the real numbers, never invented -------------
+    var knob = $('knob'), ex = $('explain');
+    if (prices.length < 2 || low == null || high == null) {
+      knob.style.left = '50%';
+      ex.textContent = 'Not enough price history yet. A buy verdict appears once a few price points have been recorded.';
     } else if (low === high) {
-      v.className = 'verdict mid';
-      v.innerHTML = '<b>Price has been steady</b>Every price we have recorded so far is ' + money(last, cur) + '. A buy verdict appears once the price moves.';
-    } else if (last <= low * 1.02) {
-      v.className = 'verdict good';
-      v.innerHTML = '<b>Good time to buy</b>The current price is at or near its lowest in the last 30 days.';
-    } else if (last >= high * 0.98) {
-      v.className = 'verdict bad';
-      v.innerHTML = '<b>It\u2019s better to wait</b>The current price is at its peak. It\u2019s better to wait for a price drop.';
+      knob.style.left = '62%';
+      ex.textContent = 'Every price recorded so far is ' + money(last, cur) +
+        '. There has been no movement yet, so there is nothing to gain by waiting — and nothing to lose by buying now.';
     } else {
-      var pctAboveLow = low ? Math.round(((last - low) / low) * 100) : 0;
-      v.className = 'verdict mid';
-      v.innerHTML = '<b>Around the middle</b>It is about ' + pctAboveLow + '% above the 30-day low. Consider waiting for a drop.';
+      // 0 = at the low, 1 = at the high. The gauge runs Skip -> Wait -> Okay ->
+      // Yes left to right, so the knob must be INVERTED: a price at its lowest
+      // belongs on the right (Yes), a price at its highest on the left (Skip).
+      var pos = (last - low) / (high - low);
+      pos = Math.max(0, Math.min(1, pos));
+      knob.style.left = ((1 - pos) * 100) + '%';
+      var aboveLow = Math.round(((last - low) / low) * 100);
+      if (pos <= 0.15) {
+        ex.textContent = 'The current price is within ' + aboveLow + '% of the lowest price recorded (' +
+          money(low, cur) + '). This is about as good as it has been — a reasonable time to buy.';
+      } else if (pos <= 0.4) {
+        ex.textContent = 'The current price is ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
+          '). It is closer to the low than the high, so buying now is reasonable, though a small drop is possible.';
+      } else if (pos <= 0.75) {
+        ex.textContent = 'The current price sits ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
+          '). It is not a bad price, but waiting may get you closer to the low.';
+      } else {
+        ex.textContent = 'The current price is near the highest recorded (' + money(high, cur) +
+          ') and ' + aboveLow + '% above the low. Waiting for a drop is likely to pay off.';
+      }
     }
-    show(v);
 
-    // ---- graph ----
-    if (!hist.length) { hide(document.querySelector('.chart-box')); show(document.getElementById('chartEmpty')); return; }
+    // ---- chart --------------------------------------------------------------
+    if (!hist.length) {
+      hide($('chartBox')); show($('chartEmpty')); return;
+    }
+    hide($('chartEmpty')); show($('chartBox'));
+
     if (typeof Chart === 'undefined') {
-      // The CDN was unreachable — show the numbers rather than an empty card.
-      document.querySelector('.chart-box').innerHTML =
-        '<div class="empty">Chart library could not load. ' + hist.length +
+      $('chartBox').innerHTML = '<div class="empty">Chart library could not load. ' + hist.length +
         ' price point(s): ' + prices.map(function (x) { return money(x, cur); }).join(' → ') + '</div>';
       return;
     }
+    drawChart(hist, low, high, avg, cur);
+  }
+
+  // ---- chart ----------------------------------------------------------------
+  function drawChart(hist, low, high, avg, cur) {
+    var ctx = $('chart');
+    if (state.chart) { state.chart.destroy(); state.chart = null; }
+
     var labels = hist.map(function (h) {
       if (!h.t) return '';
-      return new Date(h.t).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      var d = new Date(h.t);
+      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
     });
-    new Chart(document.getElementById('chart'), {
+    var data = hist.map(function (h) { return h.price; });
+
+    // Reference lines come from the real history, not from constants.
+    function flat(v, colour) {
+      return { label: '', data: hist.map(function () { return v; }), borderColor: colour,
+               borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0 };
+    }
+    var sets = [
+      flat(high, 'rgba(229,72,77,.75)'),
+      flat(avg, 'rgba(232,163,23,.75)'),
+      flat(low, 'rgba(15,157,143,.75)'),
+      { label: 'Prices', data: data, borderColor: '#0f9d8f',
+        backgroundColor: 'rgba(15,157,143,0.14)', borderWidth: 2.5,
+        fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }
+    ];
+
+    state.chart = new Chart(ctx, {
       type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Price', data: prices,
-          borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.15)',
-          borderWidth: 2, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5
-        }]
-      },
+      data: { labels: labels, datasets: sets },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function (c) { return money(c.parsed.y, cur); } } },
+          zoom: (typeof Chart.Zoom !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('zoom')))
+            ? { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+                pan: { enabled: true, mode: 'x' } }
+            : undefined
+        },
         scales: {
-          x: { grid: { color: '#20242e' }, ticks: { color: '#98a2b3', maxTicksLimit: 8 } },
-          y: { grid: { color: '#20242e' }, ticks: { color: '#98a2b3', callback: function (val) { return money(val, cur); } } }
+          x: { grid: { color: '#eef1f6' }, ticks: { color: '#6b7787', maxTicksLimit: 7, autoSkip: true } },
+          y: { grid: { color: '#eef1f6' }, ticks: { color: '#6b7787', callback: function (v) { return money(v, cur); } } }
         }
       }
     });
   }
+
+  // ---- time range -----------------------------------------------------------
+  function applyRange(r) {
+    state.range = r;
+    Array.prototype.forEach.call(document.querySelectorAll('.range'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-r') === r);
+    });
+    if (!state.chart) return;
+    if (r === 'reset' || r === 'all') { state.chart.resetZoom(); return; }
+    var days = r === '1y' ? 365 : r === '6m' ? 182 : r === '3m' ? 91 : 30;
+    var cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    var idx = 0;
+    for (var i = 0; i < state.history.length; i++) {
+      if (state.history[i].t && state.history[i].t >= cutoff) { idx = i; break; }
+      idx = i;
+    }
+    var total = state.history.length;
+    if (total < 2) return;
+    var start = Math.max(0, idx) / total;
+    var end = 1;
+    state.chart.zoomScale('x', { min: start, max: end }, 'default');
+  }
+
+  // ---- chart controls -------------------------------------------------------
+  $('fs').addEventListener('click', function () {
+    var box = $('chartBox');
+    if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); }
+    else if (box.requestFullscreen) { box.requestFullscreen(); }
+    else if (box.webkitRequestFullscreen) { box.webkitRequestFullscreen(); }
+  });
+  $('dl').addEventListener('click', function () {
+    if (!state.chart) return;
+    var a = document.createElement('a');
+    a.href = state.chart.toBase64Image();
+    a.download = 'price-history.png';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  });
+  $('cp').addEventListener('click', function () {
+    if (!state.chart || !navigator.clipboard || !window.ClipboardItem) return;
+    var img = state.chart.toBase64Image();
+    fetch(img).then(function (r) { return r.blob(); }).then(function (b) {
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]);
+    }).catch(function () {});
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.range'), function (b) {
+    b.addEventListener('click', function () { applyRange(b.getAttribute('data-r')); });
+  });
+
+  // ---- share / search -------------------------------------------------------
+  $('shareBtn').addEventListener('click', function () {
+    if (navigator.share) { navigator.share({ title: 'Price History', url: location.href }).catch(function () {}); }
+    else if (navigator.clipboard) { navigator.clipboard.writeText(location.href); }
+  });
+  $('go').addEventListener('click', function () {
+    var id = idFromInput($('q').value);
+    if (!id) { note('Paste a full Amazon or Flipkart product link, or a page URL that contains ?id=…', 'bad'); return; }
+    history.replaceState(null, '', '/?id=' + encodeURIComponent(id));
+    load(id);
+  });
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('go').click(); });
+
+  // ---- boot -----------------------------------------------------------------
+  var id = idFromInput(location.search);
+  if (id) { $('q').value = location.href; load(id); }
 })();
 </script>
 </body>

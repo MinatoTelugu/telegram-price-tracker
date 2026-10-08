@@ -334,6 +334,8 @@ async function processProduct(doc) {
   if (!data.imageUrl && result.imageUrl) update.imageUrl = result.imageUrl;
   // Remember stock state so we can alert on the out-of-stock -> in-stock change.
   if (typeof result.inStock === 'boolean') update.inStock = result.inStock;
+  // MRP / original price, when the page actually stated one (never invented).
+  if (result.mrp != null && result.mrp > newPrice) update.mrp = result.mrp;
   // Cache the canonical URL we resolved, so future runs skip the resolution.
   if (result.resolvedUrl && result.resolvedUrl !== data.fetchUrl) update.fetchUrl = result.resolvedUrl;
   await doc.ref.set(update, { merge: true });

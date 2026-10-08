@@ -253,6 +253,45 @@
     if (m === 'flipkart') return 'Flipkart';
     return m ? (m.charAt(0).toUpperCase() + m.slice(1)) : 'Product';
   }
+  // Store marks, used ONLY as a fallback when there is no product photo.
+  var STORE_LOGO = {
+    flipkart: 'https://www.flipkart.com/favicon.ico',
+    amazon: 'https://www.amazon.in/favicon.ico',
+  };
+  function badgeDataUri(label) {
+    var t = String(label || 'Store').slice(0, 10);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">' +
+      '<rect width="120" height="120" rx="26" fill="#eef2f7"/>' +
+      '<text x="60" y="72" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" ' +
+      'fill="#8792a2" text-anchor="middle">' + t + '</text></svg>';
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  /**
+   * The product photo, with graceful degradation:
+   *   1. the scraped product image
+   *   2. the store's own mark, if the image is missing or fails to load
+   *   3. a plain store badge (inline SVG, so it works offline)
+   */
+  function setProductImage(p) {
+    var img = $('pImg');
+    var store = p.marketplace || '';
+    var chain = [];
+    if (p.imageUrl) chain.push(p.imageUrl);
+    if (STORE_LOGO[store]) chain.push(STORE_LOGO[store]);
+    chain.push(badgeDataUri(storeName(store)));
+
+    var i = 0;
+    img.onerror = function () {
+      i++;
+      if (i < chain.length) img.src = chain[i];
+      else img.onerror = null;
+    };
+    img.src = chain[0];
+    img.alt = p.title ? (p.title + ' — product image') : (storeName(store) + ' product image');
+    show(img);
+  }
+
   function note(text, kind) {
     var el = $('msg');
     el.innerHTML = text
@@ -292,8 +331,7 @@
     show($('result'));
 
     // image (hidden when the page gave us none)
-    if (p.imageUrl) { $('pImg').src = p.imageUrl; $('pImg').alt = p.title || 'Product image'; show($('pImg')); }
-    else { hide($('pImg')); }
+    setProductImage(p);
 
     $('pMarket').textContent = storeName(p.marketplace);
     $('pTitle').textContent = p.title || p.productId || id;

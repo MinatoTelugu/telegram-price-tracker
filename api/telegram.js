@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-37 (2026-10-08)';
+const BUILD = 'names-38 (2026-10-08)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -1149,6 +1149,69 @@ function registerHandlers(bot) {
       console.error('price history failed', err);
     }
   }
+
+  // /check — ADMIN ONLY. Runs the individual price-tracking loop RIGHT NOW and
+  // reports what it did, so the loop is never a black box again.
+  bot.command('check', async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      const adminId = await resolveAdminId(ctx);
+      if (!adminId || String(ctx.from.id) !== String(adminId)) return;
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+
+      await ctx.reply('🔍 Running a price check now…');
+
+      let body = '';
+      const cronFn = require('./cron');
+      await cronFn(
+        { method: 'GET', headers: {}, query: {} },
+        { statusCode: 0, setHeader() {}, end(b) { body = b; } }
+      );
+
+      let summary = null;
+      try {
+        summary = JSON.parse(body || '{}');
+      } catch (e) {
+        summary = null;
+      }
+      if (!summary) {
+        await ctx.reply('The check ran but returned nothing readable.');
+        return;
+      }
+
+      const lines = [
+        '✅ <b>Price check complete</b>',
+        '',
+        'scanned: ' + (summary.scanned || 0),
+        'processed: ' + (summary.processed || 0),
+        'checked: ' + (summary.checked || 0),
+        'skipped: ' + (summary.skipped || 0),
+        'alerts sent: ' + (summary.alertsSent || 0),
+      ];
+
+      const results = Array.isArray(summary.results) ? summary.results.slice(0, 10) : [];
+      if (results.length) {
+        lines.push('', '— results —');
+        for (const r of results) {
+          lines.push(
+            escapeHtml(String(r.id).slice(0, 28)) +
+              ' → ' +
+              escapeHtml(String(r.status || '?')) +
+              (r.reason ? ' (' + escapeHtml(String(r.reason)) + ')' : '') +
+              (r.oldPrice != null && r.price != null ? ' ' + r.oldPrice + '→' + r.price : '') +
+              (r.alerts ? ' 🔔' + r.alerts : '')
+          );
+        }
+      }
+      await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('check command failed:', err);
+      await ctx.reply('The check failed: ' + String(err.message).slice(0, 200));
+    }
+  });
 
   // /broadcast — ADMIN ONLY, and silent for everyone else.
   //   /broadcast <text>            send that text to every saved user

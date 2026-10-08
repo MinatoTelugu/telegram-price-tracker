@@ -386,7 +386,11 @@ module.exports = async (req, res) => {
       return at - bt;
     });
 
-    const batch = docs.slice(0, BATCH_SIZE);
+    // ?limit=N caps this run — /check uses it so the diagnostic answers in
+    // seconds instead of working through every product with retries.
+    const requested = req && req.query && req.query.limit ? parseInt(req.query.limit, 10) : null;
+    const cap = Number.isFinite(requested) && requested > 0 ? Math.min(requested, BATCH_SIZE) : BATCH_SIZE;
+    const batch = docs.slice(0, cap);
     console.log(
       'cron: price check start — ' + docs.length + ' active of ' + totalProducts +
         ' product(s), processing ' + batch.length

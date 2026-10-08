@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-40 (2026-10-08)';
+const BUILD = 'names-41 (2026-10-08)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -1175,8 +1175,11 @@ function registerHandlers(bot) {
 
       let body = '';
       const cronFn = require('./cron');
+      // A SMALL batch: this is a diagnostic, and a full run (every product, with
+      // retries and timeouts) can take minutes. Three products answer the
+      // question — does the loop see them, and does the scrape succeed?
       await cronFn(
-        { method: 'GET', headers: internalCronHeaders(), query: {} },
+        { method: 'GET', headers: internalCronHeaders(), query: { limit: '3' } },
         { statusCode: 0, setHeader() {}, end(b) { body = b; } }
       );
 

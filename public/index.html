@@ -67,7 +67,13 @@
   .stars{font-size:14px;letter-spacing:1px;color:var(--amber);margin-top:8px}
   .stars span{color:#d7dbe2}
 
-  .priceline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .pricelabel{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+              color:var(--muted);margin-top:16px}
+  .priceline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:4px}
+  .prevline{font-size:13.5px;font-weight:700;color:var(--muted);margin-top:6px}
+  .prevline b{color:var(--ink)}
+  .prevline .up{color:var(--red)}
+  .prevline .down{color:var(--green)}
   .price{font-size:30px;font-weight:800;letter-spacing:-.02em}
   .mrp{font-size:15px;color:var(--muted);text-decoration:line-through}
   .off{font-size:12.5px;font-weight:800;color:var(--green);background:rgba(18,161,80,.10);
@@ -168,12 +174,14 @@
         </div>
       </div>
 
+      <div class="pricelabel">Current Price</div>
       <div class="priceline">
         <div class="price" id="pPrice">—</div>
         <div class="mrp" id="pMrp" style="display:none"></div>
         <div class="off" id="pOff" style="display:none"></div>
         <div class="oos" id="pOos" style="display:none">Out of stock</div>
       </div>
+      <div class="prevline" id="pPrev" style="display:none"></div>
 
       <a class="buybtn in-card" id="buyBtn" href="#" target="_blank" rel="noopener">Buy now</a>
 
@@ -338,9 +346,29 @@
     $('pMeta').textContent = p.productId ? ('ID ' + p.productId) : '';
 
     var last = p.lastPrice != null ? p.lastPrice : (hist.length ? hist[hist.length - 1].price : null);
+    var prices0 = hist.map(function (h) { return h.price; }).filter(function (x) { return typeof x === 'number'; });
 
     // price / MRP / discount — only what the data actually says
     $('pPrice').textContent = money(last, cur);
+
+    // What the price was before the most recent change — so a drop or a hike is
+    // obvious at a glance instead of just a bare number.
+    var prev = null;
+    for (var pi = prices0.length - 2; pi >= 0; pi--) {
+      if (prices0[pi] !== last) { prev = prices0[pi]; break; }
+    }
+    var prevEl = $('pPrev');
+    if (prev != null && last != null) {
+      var diff = last - prev;
+      var pct = prev ? Math.round((Math.abs(diff) / prev) * 100) : 0;
+      var arrow = diff < 0 ? '▼' : '▲';
+      var cls = diff < 0 ? 'down' : 'up';
+      prevEl.innerHTML = 'Previous Price: <b>' + money(prev, cur) + '</b> &nbsp;' +
+        '<span class="' + cls + '">' + arrow + ' ' + pct + '% ' + (diff < 0 ? 'lower' : 'higher') + '</span>';
+      show(prevEl);
+    } else {
+      hide(prevEl);
+    }
     if (p.mrp != null && last != null && p.mrp > last) {
       $('pMrp').textContent = money(p.mrp, cur); show($('pMrp'));
       var off = Math.round(((p.mrp - last) / p.mrp) * 100);

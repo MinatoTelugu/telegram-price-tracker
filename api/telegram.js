@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-48 (2026-10-08)';
+const BUILD = 'names-49 (2026-10-08)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -676,7 +676,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
 
     if (scraped) {
       info = {
-        title: scraped.title || info.title || null,
+        title: betterTitle(scraped.title, info.title),
         price: scraped.ok ? scraped.price : null,
         currency: scraped.currency || 'INR',
         imageUrl: scraped.imageUrl || null,
@@ -724,6 +724,28 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
   } catch (err) {
     console.warn('background enrichment failed:', err.message);
   }
+}
+
+/**
+ * Pick between the name derived from the URL and the one scraped off the page.
+ *
+ * The URL slug comes from the store's own canonical link, so it can never be a
+ * stray page fragment. The scraped title is fuller when it is genuine — Amazon
+ * and Flipkart slugs are truncated forms of the official name — but it is also
+ * what produced nonsense like "Samsung Moonlight Storage Upgrades Lag Free"
+ * (a feature-bullet picked up instead of the product title).
+ *
+ * So: keep the scraped title only when it plausibly extends the URL name;
+ * otherwise trust the URL.
+ */
+function betterTitle(scrapedTitle, urlTitle) {
+  const s = scrapedTitle ? String(scrapedTitle).replace(/\s+/g, ' ').trim() : null;
+  const u = urlTitle ? String(urlTitle).replace(/\s+/g, ' ').trim() : null;
+  if (!s) return u;
+  if (!u) return s;
+  const key = u.split(' ').slice(0, 3).join(' ').toLowerCase();
+  if (key && s.toLowerCase().includes(key)) return s;
+  return u;
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -1464,7 +1486,27 @@ function registerHandlers(bot) {
           originalUrl: url,
           resolvedUrl: quick.cleanUrl,
         };
-        const instantInfo = { title: quick.title, price: null, currency: 'INR', imageUrl: null };
+        // A short, bounded read so the FIRST card already carries the price and
+        // the real name — the user asked for the price up front. If the store is
+        // slow (or refuses us), we still reply immediately with what we have and
+        // the background pass fills it in.
+        let early = null;
+        try {
+          early = await withTimeout(
+            fetchProduct(instantResult.affiliateUrl || instantResult.cleanUrl, quick.marketplace),
+            1800
+          );
+        } catch (err) {
+          /* no early data — the background pass will handle it */
+        }
+
+        const instantInfo = {
+          title: betterTitle(early && early.title, quick.title),
+          price: early && early.ok ? early.price : null,
+          currency: (early && early.currency) || 'INR',
+          imageUrl: (early && early.imageUrl) || null,
+          inStock: early && typeof early.inStock === 'boolean' ? early.inStock : null,
+        };
 
         const docId = await trackProduct(instantResult, ctx.from, instantInfo);
 
@@ -1541,7 +1583,7 @@ function registerHandlers(bot) {
 
       if (scraped) {
         info = {
-          title: scraped.title || info.title || titleFromUrl(scraped.resolvedUrl || '') || null,
+          title: betterTitle(scraped.title, info.title || titleFromUrl(scraped.resolvedUrl || '')),
           price: scraped.ok ? scraped.price : null,
           currency: scraped.currency || 'INR',
           imageUrl: scraped.imageUrl || null,
@@ -1878,6 +1920,7 @@ module.exports = async (req, res) => {
 
 // Exposed for unit tests.
 module.exports._internals = {
+  betterTitle,
   escapeHtml,
   productDocId,
   extractUrl,

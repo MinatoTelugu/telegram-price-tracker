@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-41 (2026-10-08)';
+const BUILD = 'names-42 (2026-10-08)';
 const { convertAffiliateLink, resolveShortUrl } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
@@ -1224,6 +1224,9 @@ function registerHandlers(bot) {
               (r.oldPrice != null && r.price != null ? ' ' + r.oldPrice + '→' + r.price : '') +
               (r.alerts ? ' 🔔' + r.alerts : '')
           );
+          // For a skip, show WHICH url was fetched — that is what tells us
+          // whether we are hitting a dead share link, a 500 page, or a block.
+          if (r.url) lines.push('     <code>' + escapeHtml(String(r.url).slice(0, 90)) + '</code>');
         }
       }
       await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });

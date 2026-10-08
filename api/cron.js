@@ -48,6 +48,8 @@ const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
 const CHANNEL_URL = process.env.TELEGRAM_CHANNEL_URL || 'https://t.me/Ai_PriceAlert';
+// The web chart page. Must have a default, or the button silently vanishes.
+const WEB_BASE = (process.env.WEB_APP_URL || 'https://aipricealertbot.koyeb.app').replace(/\/+$/, '');
 
 /**
  * The four actions that must ride along with EVERY alert, in the same 2x2 grid
@@ -64,7 +66,7 @@ function alertKeyboard(docId, product) {
   if (buy) row1.push({ text: '✅ Buy Now', url: buy });
   row1.push({ text: '🔴 Stop Tracking', callback_data: 'untrack:' + docId });
   const row2 = [
-    { text: '📊 Price History', callback_data: 'history:' + docId },
+    { text: '📊 Price History', url: WEB_BASE + '/?id=' + encodeURIComponent(docId) },
     { text: "🛍️ Today's Deals", url: CHANNEL_URL },
   ];
   return { inline_keyboard: [row1, row2] };

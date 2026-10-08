@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-49 (2026-10-08)';
+const BUILD = 'names-50 (2026-10-08)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -75,8 +75,11 @@ function escapeHtml(value = '') {
  * "WEB_APP_URL + '/?id='" build produced a broken link like
  * "https://host/api/telegram/?id=...". Using the origin keeps links correct.
  */
+// Fallback deployment for the web chart page. Set WEB_APP_URL to override.
+const DEFAULT_WEB_URL = 'https://aipricealertbot.koyeb.app';
+
 function webAppBase() {
-  const raw = process.env.WEB_APP_URL;
+  const raw = process.env.WEB_APP_URL || DEFAULT_WEB_URL;
   if (!raw) return null;
   try {
     return new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw).origin;
@@ -597,7 +600,11 @@ function buildTrackKeyboard(docId, result) {
   const row2 = [];
   // A callback (not a URL button) so the price log is posted right in the chat;
   // the log itself carries a button through to the full chart.
-  row2.push(Markup.button.callback('📊 Price History', 'history:' + docId));
+  // Opens the web chart page directly — the in-chat text log is still available
+  // via /history_<token>.
+  const chartUrl = webAppBase() ? webAppBase() + '/?id=' + encodeURIComponent(docId) : null;
+  if (chartUrl) row2.push(Markup.button.url('📊 Price History', chartUrl));
+  else row2.push(Markup.button.callback('📊 Price History', 'history:' + docId));
   row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
   const rows = [row1, row2];
@@ -1291,7 +1298,7 @@ function registerHandlers(bot) {
       const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
       if (base) {
         opts.reply_markup = Markup.inlineKeyboard([
-          [Markup.button.url('📈 Open full chart', base + '/?id=' + encodeURIComponent(docId))],
+          [Markup.button.url('🌐 View Full Chart on Web', base + '/?id=' + encodeURIComponent(docId))],
         ]);
       }
       await ctx.reply(lines.join('\n'), opts);

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-77 (2026-10-09)';
+const BUILD = 'names-78 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1144,6 +1144,55 @@ async function finishPlaceholder(ctx, placeholder, text, extra) {
   return ctx.reply(text, extra);
 }
 
+/**
+ * Mark the card as stopped, in place.
+ *
+ * Pressing "Stop Tracking" used to leave the chat looking untouched: the record
+ * was removed but the card still read as if it were being tracked, and its
+ * buttons still worked. This rewrites the header and drops the keyboard, so the
+ * outcome is visible and the button cannot be pressed twice.
+ */
+async function markCardStopped(ctx) {
+  const msg = ctx.callbackQuery && ctx.callbackQuery.message;
+  if (!msg || !ctx.chat || !ctx.telegram) return;
+
+  // Telegram hands back the message's own markup source, so it can be re-sent
+  // as HTML unchanged. Only the header line is replaced.
+  const original = msg.text || msg.caption || '';
+
+  // The same button appears on the /list message, where rewriting the header
+  // would mangle the list and clearing the keyboard would disable the other
+  // rows. There the popup is the confirmation and the message is left alone.
+  const firstLine = original.split('\n')[0] || '';
+  const isProductCard = /Started Tracking|Tracking Stopped|Processing your link/i.test(firstLine);
+  if (!isProductCard) return;
+
+  const body = original.replace(/^[^\n]*\n?/, '');
+  const text = '🛑 <b>Tracking Stopped</b>' + (body ? '\n' + body : '');
+
+  const options = {
+    parse_mode: 'HTML',
+    // An empty keyboard is how Telegram is told to REMOVE the buttons.
+    reply_markup: { inline_keyboard: [] },
+  };
+
+  try {
+    if (msg.photo || msg.caption != null) {
+      // A photo card cannot be edited as text.
+      await ctx.telegram.editMessageCaption(ctx.chat.id, msg.message_id, undefined, text, options);
+    } else {
+      await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, text, {
+        ...options,
+        link_preview_options: { is_disabled: true },
+      });
+    }
+  } catch (err) {
+    // A card that cannot be edited is not worth failing the untrack over — the
+    // popup has already confirmed it.
+    console.warn('could not mark the card stopped:', err.message);
+  }
+}
+
 /** The "link sent" confirmation, matching the reference layout. */
 function formatTrackingConfirmation(result, info, openUrl) {
   const market = result.marketplace === 'amazon' ? 'Amazon' : 'Flipkart';
@@ -2168,17 +2217,42 @@ function registerHandlers(bot) {
   });
 
   bot.action(/^untrack:(.+)$/, async (ctx) => {
+    const answer = async (text) => {
+      try {
+        if (ctx.answerCbQuery) await ctx.answerCbQuery(text).catch(() => {});
+      } catch (err) {
+        /* the popup is best-effort; never let it break the handler */
+      }
+    };
+
     try {
       if (!ctx.from) return;
       if (!db) {
-        if (ctx.answerCbQuery) await ctx.answerCbQuery('Database not configured').catch(() => {});
+        await answer('⚠️ Database not configured.');
         return;
       }
+
       const docId = ctx.match[1];
-      await untrackProduct(docId, ctx.from);
-      if (ctx.answerCbQuery) await ctx.answerCbQuery('Stopped tracking').catch(() => {});
+
+      // The record is removed FIRST, so the popup can tell the truth — but it is
+      // BOUNDED. Previously the answer came after an unbounded write, so a stall
+      // meant the callback was never answered at all and the button just sat
+      // there spinning with no feedback whatsoever.
+      try {
+        await withTimeout(untrackProduct(docId, ctx.from), 8000);
+      } catch (err) {
+        console.error('untrack failed for', docId, err.message);
+        await answer('⚠️ Could not stop tracking. Please try again.');
+        return;
+      }
+
+      await answer('🛑 Tracking stopped for this product.');
+
+      // Then make it visible in the chat, and remove the buttons.
+      await markCardStopped(ctx);
     } catch (err) {
       console.error('action handler failed', err);
+      await answer('⚠️ Something went wrong. Please try again.');
     }
   });
 
@@ -2436,6 +2510,7 @@ module.exports._internals = {
   untrackProduct,
   buildTrackKeyboard,
   formatTrackingConfirmation,
+  markCardStopped,
   registerHandlers,
   getBot,
   parseBody,

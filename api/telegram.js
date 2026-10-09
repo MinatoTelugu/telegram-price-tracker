@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-67 (2026-10-09)';
+const BUILD = 'names-68 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -44,6 +44,7 @@ const {
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
+const { fetchReadablePage } = require('../lib/reader');
 const { expandShortLink, isShortLink } = require('../lib/shortlink');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -742,6 +743,36 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
       }
     }
 
+    // Still nothing? Read the page THROUGH a reader service. Amazon refuses this
+    // host, so this is the route that can actually see the product page — and
+    // its text gives us both the name and a price.
+    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title) || info.price == null) {
+      const page = await fetchReadablePage(result.cleanUrl || result.affiliateUrl).catch(() => null);
+      if (page) {
+        if (page.title) {
+          const named = betterTitle(
+            isGenericStoreTitle(page.title) ? null : page.title,
+            titleFromUrl(result.cleanUrl || '')
+          );
+          if (named && !isPlaceholderTitle(named, result.productId)) {
+            info.title = named;
+            console.log('track: name recovered via the reader — ' + String(named).slice(0, 70));
+          }
+        }
+        if (info.price == null) {
+          const p = priceFromText(page.text);
+          if (p != null) {
+            info.price = p;
+            console.log('track: price recovered via the reader — ' + p);
+          }
+        }
+        if (!info.imageUrl && page.text) {
+          const img = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)/.exec(page.text);
+          if (img && /^https?:\/\//i.test(img[1])) info.imageUrl = img[1].replace(/^http:/i, 'https:');
+        }
+      }
+    }
+
     await trackProduct(result, from, info);
 
     // Fill in the card we already sent.
@@ -889,6 +920,25 @@ function cleanProductName(title) {
 
   t = t.replace(/\s+/g, ' ').trim();
   return t || null;
+}
+
+/**
+ * The first plausible price in a page's TEXT.
+ *
+ * Deterministic — a regex over text we actually received — so it cannot invent a
+ * number the way a model can. It prefers a figure that sits next to the word
+ * "price", and otherwise takes the first rupee amount.
+ */
+function priceFromText(text) {
+  const t = String(text || '');
+  if (!t) return null;
+  const near = /(?:price|offer price|current price|deal price)[^\d₹]{0,40}(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t);
+  const any = /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t);
+  const m = near || any;
+  if (!m) return null;
+  // parseFloat, not parseInt: stripping the dot turned "1,499.50" into 149950.
+  const n = Math.round(parseFloat(String(m[1]).replace(/,/g, '')));
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -2095,6 +2145,7 @@ module.exports = async (req, res) => {
 // Exposed for unit tests.
 module.exports._internals = {
   betterTitle,
+  priceFromText,
   cleanProductName,
   looksLikeMarketingCopy,
   isGenericStoreTitle,

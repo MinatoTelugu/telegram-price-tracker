@@ -39,6 +39,7 @@ eval(grab('looksLikeMarketingCopy'));
 eval(grab('betterTitle'));
 eval(grab('isGenericStoreTitle'));
 eval(grab('cleanProductName'));
+eval(grab('priceFromText'));
 
 // --- marketing copy vs a real product name -----------------------------------
 check(
@@ -139,6 +140,19 @@ check(
 );
 check('an empty title yields null', cleanProductName('') === null);
 check('a null title yields null', cleanProductName(null) === null);
+
+// --- the price read out of a page's TEXT -------------------------------------
+// Deterministic (a regex over text we received), so unlike a model it cannot
+// invent a number that is not there.
+check('a price beside the word "price" wins',
+  priceFromText('Samsung Galaxy M17 5G. Current Price: ₹18,999. Free delivery.') === 18999);
+check('otherwise the first rupee amount is used',
+  priceFromText('Buy now. ₹1,299 only.') === 1299);
+check('the Rs. form is understood', priceFromText('Offer Price Rs. 14999 today') === 14999);
+check('a decimal rounds correctly, not into a huge number',
+  priceFromText('price ₹1,499.50') === 1500);
+check('a page with no price yields null', priceFromText('no prices here') === null);
+check('empty text yields null', priceFromText('') === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -204,6 +204,37 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('an http store url becomes https', out === 'https://www.flipkart.com/motorola-g77/p/itm1?pid=X');
 }
 
+// --- a scanned price far below the MRP is not a price ------------------------
+// The reliable sources are structured (JSON-LD, meta, the buybox selector). Every
+// other price is a scan of page TEXT, which is full of numbers that are not the
+// price — exchange offers, EMI instalments, coupons. Those scans produced ₹6,348
+// for an iQOO Z9s and ₹3,250 for a Motorola G77 (both in the reported log).
+{
+  const { priceLooksImplausible } = require('./lib/scraper');
+  const bad = [
+    [6348, 19999, 'the last-resort figure from the log'],
+    [3250, 21999, 'the card figure from the log'],
+    [4999, 29999, 'an EMI-scale figure'],
+  ];
+  for (const [p, m, label] of bad) {
+    check('rejects ' + label, priceLooksImplausible(p, m) === true);
+  }
+  const good = [
+    [21249, 21999, 'a real price'],
+    [18999, 19999, 'a small discount'],
+    [12999, 18999, 'a 31% discount'],
+    [7999, 9999, 'a 20% discount'],
+  ];
+  for (const [p, m, label] of good) {
+    check('keeps ' + label, priceLooksImplausible(p, m) === false);
+  }
+  check('with no MRP it cannot judge, so it keeps the price', priceLooksImplausible(5000, null) === false);
+  check('a null price is not judged', priceLooksImplausible(null, 19999) === false);
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the scanned price is checked', /priceLooksImplausible\(scanned, mrp\)/.test(scr));
+  check('the last-resort price is checked too', /priceLooksImplausible\(last\.price, mrp\)/.test(scr));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

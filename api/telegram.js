@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-54 (2026-10-09)';
+const BUILD = 'names-55 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1063,6 +1063,12 @@ function registerHandlers(bot) {
           lines.push('price-check health: could not read — ' + escapeHtml(String(e.message).slice(0, 80)));
         }
       }
+      lines.push(
+        'PAAPI (Amazon official API): ' +
+          (process.env.PAAPI_ACCESS_KEY && process.env.PAAPI_SECRET_KEY && process.env.PAAPI_PARTNER_TAG
+            ? 'configured — Amazon reads via PA-API'
+            : 'NOT configured — Amazon page reads will be refused by Amazon')
+      );
       lines.push('firebase initialised: ' + (db ? 'yes' : 'NO'));
       if (fbError) lines.push('firebase load error: <code>' + escapeHtml(String(fbError).slice(0, 220)) + '</code>');
 

@@ -12,6 +12,9 @@
  *   node scripts/clean-history.js                 # dry run — reports only
  *   node scripts/clean-history.js --apply         # actually remove the readings
  *   node scripts/clean-history.js --apply --id=<docId>   # one product
+ *   node scripts/clean-history.js --apply --id=<docId> --max=12000
+ *        # remove every reading at or below ₹12,000 for that product — no
+ *        # heuristics, for when you already know the figure is wrong
  *
  * A dry run first is the point of the default: look at what it lists, and only
  * then re-run with --apply.
@@ -28,6 +31,8 @@ function argValue(name) {
 async function main() {
   const apply = process.argv.includes('--apply');
   const productId = argValue('id') || undefined;
+  const maxArg = argValue('max');
+  const maxPrice = maxArg != null ? parseFloat(maxArg) : undefined;
 
   console.log('');
   console.log(apply ? 'MODE: APPLY (readings will be deleted)' : 'MODE: DRY RUN (nothing will be deleted)');
@@ -36,6 +41,7 @@ async function main() {
   const report = await cleanHistory({
     apply,
     productId,
+    maxPrice,
     log: (line) => console.log('  ' + line),
   });
 
@@ -44,6 +50,7 @@ async function main() {
   console.log('products with bad data: ' + report.affected);
   console.log('readings to remove    : ' + report.removed);
   console.log('refused (too much)    : ' + report.refused);
+  console.log('kept as real drops    : ' + (report.kept || 0));
   console.log('left untouched        : ' + report.untouched);
   if (apply) console.log('lastPrice re-pointed  : ' + report.lastPriceFixed);
   console.log('');

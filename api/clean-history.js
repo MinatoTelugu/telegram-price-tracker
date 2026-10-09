@@ -13,6 +13,9 @@
  *        -> removes the flagged readings and re-points lastPrice
  *
  *   ...&id=<docId>   to do a single product instead of all of them
+ *   ...&id=<docId>&max=12000
+ *        -> remove every reading at or below ₹12,000 for that product. No
+ *           heuristics: use this when you already know the figure is wrong.
  *
  * Auth is the same as /api/cron: an "Authorization: Bearer <CRON_SECRET>"
  * header, or ?secret=<CRON_SECRET> / ?key=<CRON_SECRET> in the query.
@@ -42,11 +45,13 @@ module.exports = async (req, res) => {
   const q = req.query || {};
   const apply = q.apply === '1' || q.apply === 'true' || q.apply === 'yes';
   const productId = q.id ? String(q.id) : undefined;
+  const maxPrice = q.max != null && q.max !== '' ? parseFloat(q.max) : undefined;
 
   try {
     const report = await cleanHistory({
       apply,
       productId,
+      maxPrice,
       log: (line) => console.log('clean-history: ' + line),
     });
     console.log(

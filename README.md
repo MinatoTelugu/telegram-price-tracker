@@ -37,11 +37,19 @@ node scripts/clean-history.js --apply
 What it treats as bad, and what it deliberately leaves alone:
 
 * A reading is removed only when it is **far below the product's high readings**
-  (under 60% of them by default) **and does not last** — the readings either side
-  come back at least 25% higher. That is the signature of a bad scrape.
+  (under 60% of them by default) **and the price then snaps back** — the readings
+  either side are at least 1.5x higher. That snap-back is the signature of a bad
+  scrape: a deal that *ends* rises a little (₹13,999 → ₹19,999 is 1.43x), while a
+  misread snaps back enormously (₹10,490 → ₹19,999 is 1.91x).
 * A **genuine price drop is kept.** A real drop stays down, so it is not an
   outlier relative to the product's own readings; and a low price that holds for
-  more than three consecutive readings is treated as real regardless.
+  more than 12 consecutive readings (6 hours) is treated as real regardless.
+  The dry run **lists the low readings it kept and why**, so a kept run is never
+  silent.
+* If the automatic check still keeps something you know is wrong, name the figure
+  yourself and no heuristics are involved:
+  `...&id=<docId>&max=12000` (endpoint) or `--id=<docId> --max=12000` (CLI)
+  removes every reading at or below ₹12,000 for that product.
 * A product with fewer than five readings is left alone — there is no baseline
   worth trusting.
 * If a product would lose more than half its readings, it is **refused** and

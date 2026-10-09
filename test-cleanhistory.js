@@ -83,19 +83,62 @@ function pt(id, price, day) {
   check('...and says why', /too few readings/.test(String(v.reason)));
 }
 
-// --- 5. a low price that HOLDS is a real drop, not an artifact ---------------
+// --- 5. the reported case, at ANY run length ---------------------------------
+// The bad scrape repeats the SAME wrong figure on every check, so the bad run is
+// long. Judging by run length alone kept exactly the data being cleaned — which
+// is why the page still showed ₹10,490.
 {
-  // Four consecutive low readings. A scrape artifact appears once or twice; a
-  // price that stays down for four checks is a genuine drop and must survive.
-  const readings = [
-    pt('a', 19999, 1), pt('b', 19999, 2), pt('c', 12000, 3),
-    pt('d', 12000, 4), pt('e', 12000, 5), pt('f', 12000, 6),
-  ];
-  check('a low price that holds for several readings is kept',
-    findBadPoints(readings).drop.length === 0);
+  // A realistic history: a day of normal readings either side of the bad run,
+  // so the run is a small share of the history (as it is on the real product).
+  for (const n of [1, 2, 3, 4, 6, 10]) {
+    const readings = [];
+    for (let i = 0; i < 20; i++) readings.push(pt('a' + i, 19999, i + 1));
+    for (let i = 0; i < n; i++) readings.push(pt('bad' + i, 10490, 21 + i));
+    for (let i = 0; i < 20; i++) readings.push(pt('z' + i, 19999, 40 + i));
+    const v = findBadPoints(readings);
+    check('a bad run of ' + n + ' readings is removed', v.drop.length === n);
+  }
 }
 
-// --- 6. refuse when most of the history would go ------------------------------
+// --- 6. a real drop is still safe --------------------------------------------
+{
+  // A 30%-off deal that ends: ₹13,999 -> ₹19,999 is only 1.43x, not the huge
+  // snap-back a misread shows, so the deal is kept.
+  const readings = [pt('a', 19999, 1), pt('b', 19999, 2)];
+  for (let i = 0; i < 4; i++) readings.push(pt('d' + i, 13999, 3 + i));
+  readings.push(pt('y', 19999, 40), pt('z', 19999, 41));
+  check('a deal that ends and rises a little is NOT removed',
+    findBadPoints(readings).drop.length === 0);
+}
+{
+  // A low price holding for a very long time is a real drop, whatever the ratio.
+  const readings = [pt('a', 19999, 1), pt('b', 19999, 2)];
+  for (let i = 0; i < 20; i++) readings.push(pt('d' + i, 11000, 3 + i));
+  readings.push(pt('y', 19999, 40), pt('z', 19999, 41));
+  const v = findBadPoints(readings);
+  check('a low price holding for many hours is kept', v.drop.length === 0);
+  check('...and it is REPORTED as kept, not silently ignored',
+    Array.isArray(v.kept) && v.kept.length === 20);
+  check('...with a reason that mentions it was kept', /kept/.test(String(v.reason)));
+}
+{
+  // A drop still live at the end — no recovery at all — is real.
+  const readings = [pt('a', 19999, 1), pt('b', 19999, 2)];
+  for (let i = 0; i < 6; i++) readings.push(pt('d' + i, 14999, 3 + i));
+  check('a drop still live at the end is kept', findBadPoints(readings).drop.length === 0);
+}
+
+// --- 7. the explicit override needs no heuristics -----------------------------
+{
+  const readings = [pt('a', 19999, 1), pt('b', 19999, 2), pt('c', 10490, 3), pt('d', 10490, 4), pt('e', 19999, 5)];
+  const v = findBadPoints(readings, { maxPrice: 12000 });
+  check('maxPrice removes every reading at or below it', v.drop.length === 2);
+  check('maxPrice is marked explicit', v.explicit === true);
+  const none = findBadPoints(readings, { maxPrice: 5000 });
+  check('maxPrice below everything removes nothing', none.drop.length === 0);
+}
+
+// --- 8. refuse when most of the history would go ------------------------------
 {
   // Scattered bad readings, more than half of the history — that is not an
   // outlier problem, so the product is refused rather than gutted.
@@ -109,7 +152,7 @@ function pt(id, price, day) {
   check('...and says it refused', /refused/.test(String(v.reason)));
 }
 
-// --- 6. the fake Firestore ----------------------------------------------------
+// --- 9. the fake Firestore ----------------------------------------------------
 function fakeFirestore(products) {
   const writes = { deleted: [], updates: [] };
   const makeHistRef = (pid, hid) => ({ pid, hid });
@@ -170,7 +213,7 @@ const fixture = [
   },
 ];
 
-// --- 7. a dry run writes nothing ---------------------------------------------
+// --- 10. a dry run writes nothing --------------------------------------------
 {
   const { fb, writes } = fakeFirestore(fixture);
   return (async () => {
@@ -196,7 +239,7 @@ const fixture = [
     check('the applied report says cleaned', report2.products[0].status === 'cleaned');
     check('the applied report counts what it removed', report2.removed === 1);
 
-    // --- 9. the surfaces that expose it --------------------------------------
+    // --- 11. the surfaces that expose it -------------------------------------
     const fs = require('fs');
     check('the endpoint exists', fs.existsSync(path.join(__dirname, 'api/clean-history.js')));
     check('the CLI exists', fs.existsSync(path.join(__dirname, 'scripts/clean-history.js')));
@@ -204,6 +247,9 @@ const fixture = [
     check('the endpoint is gated by CRON_SECRET', ep.includes('CRON_SECRET'));
     check('the endpoint is a dry run unless apply is set',
       ep.includes("q.apply === '1'") && ep.includes('apply'));
+    check('the endpoint accepts an explicit max price', ep.includes('q.max'));
+    const cli = fs.readFileSync(path.join(__dirname, 'scripts/clean-history.js'), 'utf8');
+    check('the CLI accepts an explicit max price', cli.includes("argValue('max')"));
     const tg = fs.readFileSync(path.join(__dirname, 'api/telegram.js'), 'utf8');
     check('there is a Telegram admin command for it', /cleanhistory/.test(tg));
     check('the Telegram command checks the admin', /cleanhistory[\s\S]{0,400}resolveAdminId/.test(tg));

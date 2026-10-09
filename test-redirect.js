@@ -114,6 +114,16 @@ check('fkrt.it is a short link', shortlink.isShortLink('https://fkrt.it/abc') ==
 check('flipkart.com/s is a short link', shortlink.isShortLink('https://www.flipkart.com/s/AbC123') === true);
 check('a canonical amazon url is NOT a short link', shortlink.isShortLink('https://www.amazon.in/dp/B0G81TPT89') === false);
 check('a canonical flipkart url is NOT a short link', shortlink.isShortLink('https://www.flipkart.com/x/p/itmabc?pid=MOBX1') === false);
+// The Flipkart APP share form is not a product page — fetching it returns 500,
+// so it has to be expanded like any other share link.
+check(
+  'the flipkart app-share form is treated as a short link',
+  shortlink.isShortLink('https://www.flipkart.com/product/p/itme?pid=MOBHK55AG6VHCDYG') === true
+);
+check(
+  'a flipkart search url is NOT a short link',
+  shortlink.isShortLink('https://www.flipkart.com/search?q=shoes') === false
+);
 
 (async () => {
   check('a non-short link is returned unchanged',

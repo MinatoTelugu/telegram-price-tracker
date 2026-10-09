@@ -200,7 +200,10 @@ function isFlipkartShortLink(url) {
   try {
     const u = new URL(url);
     if (FLIPKART_SHORT_HOSTS.test(u.hostname)) return true;
-    return u.hostname.endsWith('flipkart.com') && /^\/s\//i.test(u.pathname);
+    if (!u.hostname.endsWith('flipkart.com')) return false;
+    // `/product/p/itme?pid=…` is the Flipkart APP share form — not a product
+    // page. Fetching it returns HTTP 500, so it must be expanded first.
+    return /^\/s\//i.test(u.pathname) || /^\/product\/p\/itm/i.test(u.pathname);
   } catch (err) {
     return false;
   }

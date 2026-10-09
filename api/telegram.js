@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-68 (2026-10-09)';
+const BUILD = 'names-71 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -45,6 +45,7 @@ const { convertWithProvider, converterConfigured, convertRaw } = require('../lib
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
 const { fetchReadablePage } = require('../lib/reader');
+const { lookupAsin, amazonApiConfigured } = require('../lib/amazonapi');
 const { expandShortLink, isShortLink } = require('../lib/shortlink');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
@@ -770,6 +771,36 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
           const img = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)/.exec(page.text);
           if (img && /^https?:\/\//i.test(img[1])) info.imageUrl = img[1].replace(/^http:/i, 'https:');
         }
+      }
+    }
+
+    // FINAL route for Amazon: a hosted product API. Its free tier is small
+    // (1,000 calls/month), so it is only reached when the page, the metadata
+    // service, the reader and the search API all came back empty.
+    if (
+      result.marketplace === 'amazon' &&
+      amazonApiConfigured() &&
+      (isPlaceholderTitle(info.title, result.productId) ||
+        looksLikeMarketingCopy(info.title) ||
+        info.price == null ||
+        !info.imageUrl)
+    ) {
+      const item = await lookupAsin(result.productId).catch(() => null);
+      if (item) {
+        if (item.title) {
+          const named = betterTitle(
+            isGenericStoreTitle(item.title) ? null : item.title,
+            info.title || titleFromUrl(result.cleanUrl || '')
+          );
+          if (named && !isPlaceholderTitle(named, result.productId)) info.title = named;
+        }
+        if (info.price == null && item.price != null) info.price = item.price;
+        if (!info.imageUrl && item.image) info.imageUrl = item.image;
+        if (info.inStock == null && item.inStock != null) info.inStock = item.inStock;
+        console.log(
+          'track: amazon data via the hosted API — title="' +
+            String(info.title || '').slice(0, 50) + '" price=' + (info.price != null ? info.price : 'none')
+        );
       }
     }
 

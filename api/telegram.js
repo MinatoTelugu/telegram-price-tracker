@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-64 (2026-10-09)';
+const BUILD = 'names-65 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -722,7 +722,10 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
       const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
       if (meta) {
-        const named = betterTitle(meta.title, titleFromUrl(result.cleanUrl || ''));
+        const named = betterTitle(
+          isGenericStoreTitle(meta.title) ? null : meta.title,
+          titleFromUrl(result.cleanUrl || '')
+        );
         if (named && !isPlaceholderTitle(named, result.productId)) {
           info.title = named;
           console.log('track: recovered the name via metadata — ' + String(named).slice(0, 70));
@@ -790,8 +793,13 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
  * otherwise trust the URL.
  */
 function betterTitle(scrapedTitle, urlTitle) {
-  const s = scrapedTitle ? String(scrapedTitle).replace(/\s+/g, ' ').trim() : null;
-  const u = urlTitle ? String(urlTitle).replace(/\s+/g, ' ').trim() : null;
+  // `let`, not `const`: both are cleared below when they turn out to be a
+  // store-page name rather than a product name.
+  let s = scrapedTitle ? String(scrapedTitle).replace(/\s+/g, ' ').trim() : null;
+  let u = urlTitle ? String(urlTitle).replace(/\s+/g, ' ').trim() : null;
+  // A store-page name is never a product name.
+  if (s && isGenericStoreTitle(s)) s = null;
+  if (u && isGenericStoreTitle(u)) u = null;
   if (!s) return u;
   if (!u) return s;
   // A real product name always beats marketing copy, whichever side it is on.
@@ -819,6 +827,20 @@ function looksLikeMarketingCopy(title) {
   const hasParen = /[()]/.test(t);
   const hasSpec = /\b(gb|tb|ram|rom|mah|inch|cm|mm|mp|5g|4g|lte|oled|amoled|led|smart|pro|max|plus|series|edition|bluetooth|wireless|headphone|earbud|speaker|watch|shoe|shirt|kurta|saree|jeans|top|camera|laptop|mobile|phone|tablet|charger|cable|bag|bottle)\b/i.test(t);
   return !hasDigit && !hasParen && !hasSpec;
+}
+
+/**
+ * A generic store-page name, not a product. The metadata service and the search
+ * API can both return the STORE's own page title ("Amazon.in", "Flipkart") when
+ * the link they were given was a bare short link — which is worse than the name
+ * we already had.
+ */
+function isGenericStoreTitle(title) {
+  const t = String(title || '').trim().toLowerCase();
+  if (!t) return true;
+  return /^(amazon(\.in|\.com|\.co\.uk|\.de|\.ca|\.com\.au| india)?|flipkart|myntra|ajio|nykaa|meesho|snapdeal|tatacliq|shop online|online shopping|electronics store|buy online|home page)\b/i.test(
+    t
+  );
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -2026,6 +2048,7 @@ module.exports = async (req, res) => {
 module.exports._internals = {
   betterTitle,
   looksLikeMarketingCopy,
+  isGenericStoreTitle,
   escapeHtml,
   productDocId,
   extractUrl,

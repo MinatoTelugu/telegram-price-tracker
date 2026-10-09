@@ -37,6 +37,7 @@ function grab(name) {
 
 eval(grab('looksLikeMarketingCopy'));
 eval(grab('betterTitle'));
+eval(grab('isGenericStoreTitle'));
 
 // --- marketing copy vs a real product name -----------------------------------
 check(
@@ -91,6 +92,22 @@ check(
   betterTitle('Samsung Moonlight Storage Upgrades Lag Free', null) ===
     'Samsung Moonlight Storage Upgrades Lag Free'
 );
+
+// --- a store-page name is never a product name -------------------------------
+check('"Amazon.in" is a generic store title', isGenericStoreTitle('Amazon.in') === true);
+check('"Amazon India" is generic', isGenericStoreTitle('Amazon India') === true);
+check('"Flipkart" is generic', isGenericStoreTitle('Flipkart') === true);
+check('"Online Shopping" is generic', isGenericStoreTitle('Online Shopping') === true);
+check('a real product name is NOT generic',
+  isGenericStoreTitle('Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM)') === false);
+check('an empty title counts as generic', isGenericStoreTitle('') === true);
+
+check('a store title loses to the URL name',
+  betterTitle('Amazon.in', 'Samsung Galaxy M17 5G Mobile') === 'Samsung Galaxy M17 5G Mobile');
+check('a store title alone yields null, not a wrong name',
+  betterTitle('Amazon.in', null) === null);
+check('a store title never beats a real scraped name',
+  betterTitle('Samsung Galaxy M17 5G Mobile', 'Amazon.in') === 'Samsung Galaxy M17 5G Mobile');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

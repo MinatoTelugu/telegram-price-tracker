@@ -24,6 +24,7 @@
 
 const axios = require('axios');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
+const { fetchMetadata } = require('../lib/metadata');
 
 // Load Firebase defensively: missing credentials must not crash the process
 // (on Koyeb a throw here would kill the whole app at startup).
@@ -329,6 +330,18 @@ async function processProduct(doc) {
         if (r && r.title) title = r.title;
       } catch (err) {
         console.warn('cron name resolution failed for', doc.id, err.message);
+      }
+      // Still unusable (the store refuses this host)? Ask the metadata service.
+      if (titleLooksUnusable(title, data.productId)) {
+        try {
+          const meta = await fetchMetadata(data.cleanUrl || data.affiliateUrl);
+          if (meta && meta.title && !titleLooksUnusable(meta.title, data.productId)) {
+            title = meta.title;
+            console.log('cron: recovered the name via metadata for ' + doc.id);
+          }
+        } catch (err) {
+          console.warn('cron metadata fallback failed for', doc.id, err.message);
+        }
       }
     }
     if (title && !titleLooksUnusable(title, data.productId)) update.title = title;

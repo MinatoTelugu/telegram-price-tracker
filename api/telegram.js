@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-52 (2026-10-08)';
+const BUILD = 'names-53 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -43,6 +43,7 @@ const {
 } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
+const { fetchMetadata } = require('../lib/metadata');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -715,6 +716,20 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
       }
     }
 
+    // Still nothing? Our IP is refused by the store (Amazon especially). Ask a
+    // metadata service, which fetches the page from its own servers.
+    if (isPlaceholderTitle(info.title, result.productId)) {
+      const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
+      if (meta) {
+        const named = betterTitle(meta.title, titleFromUrl(result.cleanUrl || ''));
+        if (named && !isPlaceholderTitle(named, result.productId)) {
+          info.title = named;
+          console.log('track: recovered the name via metadata — ' + String(named).slice(0, 70));
+        }
+        if (!info.imageUrl && meta.image) info.imageUrl = meta.image;
+      }
+    }
+
     await trackProduct(result, from, info);
 
     // Fill in the card we already sent.
@@ -1369,6 +1384,7 @@ function registerHandlers(bot) {
               ' → ' +
               escapeHtml(String(r.status || '?')) +
               (r.reason ? ' (' + escapeHtml(String(r.reason)) + ')' : '') +
+              (r.httpStatus ? ' HTTP ' + r.httpStatus : '') +
               (r.oldPrice != null && r.price != null ? ' ' + r.oldPrice + '→' + r.price : '') +
               (r.alerts ? ' 🔔' + r.alerts : '')
           );

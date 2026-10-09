@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-83 (2026-10-09)';
+const BUILD = 'names-84 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -678,16 +678,24 @@ function quickClassify(raw) {
  * page, updates the record, and EDITS the message we already sent — so the user
  * sees one card that fills itself in rather than waiting a minute for it.
  */
-async function enrichTracked(ctx, sentMessage, rawUrl, from) {
+async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
   try {
     const result = await convertAffiliateLink(rawUrl);
     if (!result || !result.ok) return;
 
+    // SEED from what the card ALREADY shows. This function EDITS the message, so
+    // starting from blank means a failed lookup BLANKS a field the early reply
+    // had already filled. That is exactly what happened: the card was sent with
+    // a price, the enrichment's own scrape hit a 503, and the edit removed the
+    // price — and a title it could not re-find became "This product".
+    // From here on, every lookup may only IMPROVE a field, never clear it.
+    const prior = existing || {};
     let info = {
-      title: titleFromUrl(result.resolvedUrl || rawUrl || result.cleanUrl),
-      price: null,
-      currency: 'INR',
-      imageUrl: null,
+      title: prior.title || titleFromUrl(result.resolvedUrl || rawUrl || result.cleanUrl),
+      price: prior.price != null ? prior.price : null,
+      currency: prior.currency || 'INR',
+      imageUrl: prior.imageUrl || null,
+      inStock: prior.inStock != null ? prior.inStock : null,
     };
 
     const [scraped, viaConverter] = await Promise.all([
@@ -700,12 +708,17 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     ]);
 
     if (scraped) {
+      // Only overwrite with something real. A failed scrape (ok === false, which
+      // the 503s make the normal case for Amazon) must leave the seeded price and
+      // title in place.
+      const scrapedPrice = scraped.ok && scraped.price != null ? scraped.price : null;
       info = {
         title: betterTitle(scraped.title, info.title),
-        price: scraped.ok ? scraped.price : null,
-        currency: scraped.currency || 'INR',
-        imageUrl: scraped.imageUrl || null,
-        inStock: typeof scraped.inStock === 'boolean' ? scraped.inStock : null,
+        price: scrapedPrice != null ? scrapedPrice : info.price,
+        currency: scraped.currency || info.currency || 'INR',
+        imageUrl: scraped.imageUrl || info.imageUrl || null,
+        inStock:
+          typeof scraped.inStock === 'boolean' ? scraped.inStock : info.inStock != null ? info.inStock : null,
       };
     }
     if (viaConverter) {
@@ -2043,7 +2056,7 @@ function registerHandlers(bot) {
         );
 
         // Enrich AFTER replying — never before.
-        enrichTracked(ctx, sent, url, ctx.from).catch((err) =>
+        enrichTracked(ctx, sent, url, ctx.from, instantInfo).catch((err) =>
           console.warn('enrich failed:', err.message)
         );
         return;
@@ -2185,7 +2198,7 @@ function registerHandlers(bot) {
         const sentSlow = await finishPlaceholder(ctx, placeholder, replyText, extra);
         // Fill the card in afterwards, exactly as the fast path does — the
         // first fetch is bounded at 2.5s, so the price is often still missing.
-        enrichTracked(ctx, sentSlow, url, ctx.from).catch((err) =>
+        enrichTracked(ctx, sentSlow, url, ctx.from, info).catch((err) =>
           console.warn('enrich failed:', err.message)
         );
       }

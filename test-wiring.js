@@ -167,6 +167,43 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('deals.js declares CHANNEL_URL', /^const CHANNEL_URL =/m.test(deals));
 }
 
+// --- the enrichment must never BLANK what the card already shows -------------
+// enrichTracked EDITS the message. It used to build a fresh info starting at
+// price: null, so when its own scrape hit a 503 (the normal case for Amazon) the
+// edit REMOVED the price the early reply had already found — and a title it could
+// not re-find became "This product". Every lookup must only improve a field.
+{
+  const src = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  const start = src.indexOf('async function enrichTracked');
+  const fn = src.slice(start, src.indexOf('\n}', start));
+
+  check('enrichTracked accepts what the card already shows', /\(ctx, sentMessage, rawUrl, from, existing\)/.test(fn));
+  check('it seeds the title from the existing card', /title: prior\.title \|\|/.test(fn));
+  check('it seeds the PRICE from the existing card', /price: prior\.price != null \? prior\.price : null/.test(fn));
+  check('a scrape with no price keeps the seeded one', /price: scrapedPrice != null \? scrapedPrice : info\.price/.test(fn));
+  check('a scrape with no image keeps the seeded one', /imageUrl: scraped\.imageUrl \|\| info\.imageUrl/.test(fn));
+  check('both call sites pass the current info',
+    /enrichTracked\(ctx, sent, url, ctx\.from, instantInfo\)/.test(src) &&
+      /enrichTracked\(ctx, sentSlow, url, ctx\.from, info\)/.test(src));
+}
+
+// --- the converter must reach the shared expander ---------------------------
+// affiliate.js had its own resolver that could not reach dl.flipkart.com, so the
+// logs said "short link unresolved" for links the shared expander resolves fine.
+{
+  const aff = fs.readFileSync(__dirname + '/lib/affiliate.js', 'utf8');
+  check('the converter falls back to the shared expander', /resolveViaSharedExpander/.test(aff));
+  check('...and loads it lazily, to avoid a require cycle', /require\('\.\/shortlink'\)/.test(aff));
+  check('...and blocks re-entrancy, which would recurse forever', /sharedExpandInFlight/.test(aff));
+}
+
+// --- an http store url is upgraded ------------------------------------------
+{
+  const { acceptExpansion } = require('./lib/shortlink');
+  const out = acceptExpansion('http://www.flipkart.com/motorola-g77/p/itm1?pid=X');
+  check('an http store url becomes https', out === 'https://www.flipkart.com/motorola-g77/p/itm1?pid=X');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

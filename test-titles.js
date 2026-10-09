@@ -40,6 +40,15 @@ eval(grab('betterTitle'));
 eval(grab('isGenericStoreTitle'));
 eval(grab('cleanProductName'));
 eval(grab('priceFromText'));
+// firstRealPrice and parsePrice live in the scraper, so read that file too.
+const scraperSrc = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+function grabScraper(name) {
+  const m = scraperSrc.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}', 'm'));
+  if (!m) throw new Error('could not extract ' + name + ' from lib/scraper.js');
+  return m[0];
+}
+eval(grabScraper('parsePrice'));
+eval(grabScraper('firstRealPrice'));
 
 // --- marketing copy vs a real product name -----------------------------------
 check(
@@ -153,6 +162,22 @@ check('a decimal rounds correctly, not into a huge number',
   priceFromText('price ₹1,499.50') === 1500);
 check('a page with no price yields null', priceFromText('no prices here') === null);
 check('empty text yields null', priceFromText('') === null);
+
+// --- the price on a page full of offers --------------------------------------
+// A Flipkart page carries exchange, EMI, coupon and sponsored figures. Taking
+// the first rupee amount reported a ₹19,999 phone as dropping to ₹10,490.
+const reportPage =
+  'Infinix Note 50s 5G+ (Titanium Grey, 128 GB) (6 GB RAM) ₹19,999. +₹129 Protect Promise Fee. ' +
+  'WOW! DEAL Apply offers for maximum savings ₹18,999 Lowest price for you. OR ₹6,845 x 3m Pay ₹20,534. ' +
+  'Exchange offer: Up to ₹10,490 off on your old phone. Notify Me';
+check('the exchange figure is NOT taken as the price', firstRealPrice(reportPage) !== 10490);
+check('the real price is taken from that page', firstRealPrice(reportPage) === 19999);
+check('a bare price works', firstRealPrice('₹19,999') === 19999);
+check('an exchange-only string yields null, not a wrong number',
+  firstRealPrice('Exchange offer: Up to ₹10,490 off') === null);
+check('a cashback clause is skipped', firstRealPrice('Cashback ₹2,000. ₹18,999 Lowest price for you') === 18999);
+check('a protection-fee clause is skipped', firstRealPrice('₹129 Protect Promise Fee. ₹19,999') === 19999);
+check('no price at all yields null', firstRealPrice('no prices here') === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

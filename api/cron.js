@@ -128,44 +128,44 @@ function titleLooksUnusable(title, productId) {
   return false;
 }
 
-function formatAlert(product, oldPrice, newPrice, pct, kind) {
+function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow) {
   const name = product.title ? String(product.title).slice(0, 80) : product.productId;
   const link = product.affiliateUrl || product.cleanUrl || '';
   const tail = link ? '\n\n🔗 ' + link : '';
 
+  // A clear header, then the stock status on its own bold line. The status was
+  // buried in small text, so users read a price and assumed it was a live deal.
+  const HEAD = {
+    drop: '📉 <b>PRICE DROP ALERT</b>',
+    rise: '📈 <b>PRICE INCREASE ALERT</b>',
+    restock: '📦 <b>BACK IN STOCK ALERT</b>',
+  };
+  const status =
+    inStockNow === false ? '🔴 <b>STATUS: OUT OF STOCK</b>' : '🟢 <b>STATUS: IN STOCK</b>';
+  const top = (HEAD[kind] || HEAD.drop) + '\n━━━━━━━━━━━━━━━━━━━\n' + status + '\n\n📱 <b>Product:</b> ' + name;
+
   if (kind === 'restock') {
     return (
-      '📦 <b>The Product is currently In Stock.</b>\n\n' +
-      name +
-      '\n\nPreviously Out of Stock' +
-      (newPrice != null ? '\n\nCurrent Price: ₹' + newPrice : '') +
+      top +
+      '\nPreviously Out of Stock' +
+      (newPrice != null ? '\n💰 <b>Current Price:</b> ₹' + newPrice : '') +
       tail
     );
   }
   if (kind === 'rise') {
     return (
-      '📈 <b>Price increased</b>\n\n' +
-      name +
-      '\n\n₹' +
-      oldPrice +
-      ' → <b>₹' +
-      newPrice +
-      '</b>  (+' +
-      Math.abs(pct).toFixed(1) +
-      '%)' +
+      top +
+      '\n💰 <b>Current Price:</b> ₹' + newPrice +
+      '\n❌ <b>Previous Price:</b> ₹' + oldPrice +
+      '\n(+' + Math.abs(pct).toFixed(1) + '%)' +
       tail
     );
   }
   return (
-    '📉 <b>Price drop!</b>\n\n' +
-    name +
-    '\n\n₹' +
-    oldPrice +
-    ' → <b>₹' +
-    newPrice +
-    '</b>  (−' +
-    Math.abs(pct).toFixed(1) +
-    '%)' +
+    top +
+    '\n💰 <b>Current Price:</b> ₹' + newPrice +
+    '\n❌ <b>Previous Price:</b> ₹' + oldPrice +
+    '\n(' + pct.toFixed(1) + '%)' +
     tail
   );
 }
@@ -392,16 +392,22 @@ async function processProduct(doc) {
       ? ((newPrice - oldPrice) / oldPrice) * 100
       : null;
 
+  // A product that is OUT OF STOCK right now must never produce a price alert.
+  // Its page carries exchange, EMI, coupon and sponsored figures, and a wrong
+  // one there is exactly how a false "price dropped to ₹10,490" was sent for a
+  // ₹19,999 phone that was not even in stock.
+  const outOfStockNow = result.inStock === false;
+
   let message = null;
-  if (pct != null && pct <= -DROP_THRESHOLD) {
-    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'drop');
-  } else if (pct != null && pct >= INCREASE_THRESHOLD) {
-    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise');
+  if (!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'drop', result.inStock);
+  } else if (!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise', result.inStock);
   }
 
   // Only on the TRANSITION, so we don't repeat it every run.
   if (wasOutOfStock && result.inStock === true) {
-    message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'restock');
+    message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'restock', true);
   }
 
   if (message) {

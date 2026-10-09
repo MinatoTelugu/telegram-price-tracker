@@ -62,5 +62,20 @@ check(
 );
 check('a photo card upgrade exists for cards that gain an image', tg.includes('upgraded the card to a photo card'));
 
+// --- an out-of-stock product must never produce a price alert ----------------
+const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+check('the cron detects the out-of-stock state before alerting', cron.includes('outOfStockNow'));
+check('a drop alert is gated on being in stock', /!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD/.test(cron));
+check('a rise alert is gated on being in stock', /!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD/.test(cron));
+check('the alert carries a bold in-stock status line', cron.includes('STATUS: IN STOCK'));
+check('the alert carries a bold out-of-stock status line', cron.includes('STATUS: OUT OF STOCK'));
+check('the alert has a price-drop header', cron.includes('PRICE DROP ALERT'));
+check('the alert has a back-in-stock header', cron.includes('BACK IN STOCK ALERT'));
+
+const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+check('the stock check reads the whole page', /\$\('body'\)\.text\(\)\.replace\(\/\\s\+\/g, ' '\)\.toLowerCase\(\)/.test(scr));
+check('the stock check treats "Notify Me" as out of stock', scr.includes("'notify me'"));
+check('the rupee fallback skips exchange/EMI figures', scr.includes('firstRealPrice'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

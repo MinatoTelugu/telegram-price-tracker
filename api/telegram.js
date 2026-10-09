@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-63 (2026-10-09)';
+const BUILD = 'names-64 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -734,15 +734,43 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     await trackProduct(result, from, info);
 
     // Fill in the card we already sent.
-    if (sentMessage && sentMessage.message_id && ctx.chat && ctx.telegram && ctx.telegram.editMessageText) {
-      const text = formatTrackingConfirmation(result, info, null);
-      await ctx.telegram
-        .editMessageText(ctx.chat.id, sentMessage.message_id, undefined, text, {
-          parse_mode: 'HTML',
-          link_preview_options: { is_disabled: true },
-        })
-        .catch(() => {});
-      console.log('track: enriched message for ' + result.productId);
+    const docId = productDocId(result);
+    const keyboard = buildTrackKeyboard(docId, result);
+
+    if (sentMessage && sentMessage.message_id && ctx.chat && ctx.telegram) {
+      // A card with a photo now, where the instant reply had none: send the full
+      // photo card and remove the text one, so the finished card looks the same
+      // for every store.
+      if (info.imageUrl && !sentMessage.photo && ctx.telegram.sendPhoto) {
+        try {
+          await ctx.telegram.sendPhoto(
+            ctx.chat.id,
+            info.imageUrl,
+            Object.assign({ caption: formatTrackingConfirmation(result, info, null) }, keyboard)
+          );
+          await ctx.telegram.deleteMessage(ctx.chat.id, sentMessage.message_id).catch(() => {});
+          console.log('track: upgraded the card to a photo card for ' + result.productId);
+          return;
+        } catch (err) {
+          console.warn('photo upgrade failed, editing text instead:', err.message);
+        }
+      }
+
+      if (ctx.telegram.editMessageText) {
+        const text = formatTrackingConfirmation(result, info, null);
+        await ctx.telegram
+          .editMessageText(ctx.chat.id, sentMessage.message_id, undefined, text, {
+            parse_mode: 'HTML',
+            link_preview_options: { is_disabled: true },
+            // CRITICAL: omitting reply_markup here makes Telegram REMOVE the
+            // inline keyboard — which is exactly why Amazon cards, whose
+            // enrichment always ran, lost their buttons while Flipkart's kept
+            // them.
+            reply_markup: keyboard.reply_markup,
+          })
+          .catch(() => {});
+        console.log('track: enriched message for ' + result.productId);
+      }
     }
   } catch (err) {
     console.warn('background enrichment failed:', err.message);

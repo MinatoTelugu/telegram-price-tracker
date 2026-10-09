@@ -49,5 +49,18 @@ check(
 check('the deals cron is scheduled too', src.includes('cron.schedule(dealsCron'));
 check('a startup run is still queued', src.includes('setTimeout(') && src.includes('runJob('));
 
+// --- the enrichment must not silently strip the inline keyboard ---------------
+// Telegram REMOVES a message's inline keyboard when editMessageText is called
+// without reply_markup. That is why Amazon cards (whose background enrichment
+// always ran) lost their buttons while Flipkart's kept theirs.
+const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+const editCall = tg.slice(tg.indexOf('editMessageText(ctx.chat.id, sentMessage.message_id'));
+check('the enrichment edits the card', editCall.length > 0);
+check(
+  'and passes reply_markup, so the buttons survive the edit',
+  editCall.slice(0, 600).includes('reply_markup')
+);
+check('a photo card upgrade exists for cards that gain an image', tg.includes('upgraded the card to a photo card'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-62 (2026-10-09)';
+const BUILD = 'names-63 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -699,7 +699,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
         info.resolvedUrl = viaConverter;
       }
     }
-    if (isPlaceholderTitle(info.title, result.productId)) {
+    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
       const resolved = await withTimeout(
         resolveProductName({
           marketplace: result.marketplace,
@@ -719,7 +719,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
 
     // Still nothing? Our IP is refused by the store (Amazon especially). Ask a
     // metadata service, which fetches the page from its own servers.
-    if (isPlaceholderTitle(info.title, result.productId)) {
+    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
       const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
       if (meta) {
         const named = betterTitle(meta.title, titleFromUrl(result.cleanUrl || ''));
@@ -766,9 +766,31 @@ function betterTitle(scrapedTitle, urlTitle) {
   const u = urlTitle ? String(urlTitle).replace(/\s+/g, ' ').trim() : null;
   if (!s) return u;
   if (!u) return s;
+  // A real product name always beats marketing copy, whichever side it is on.
+  if (looksLikeMarketingCopy(s) && !looksLikeMarketingCopy(u)) return u;
   const key = u.split(' ').slice(0, 3).join(' ').toLowerCase();
   if (key && s.toLowerCase().includes(key)) return s;
   return u;
+}
+
+/**
+ * Does this look like marketing/A+ copy rather than a product name?
+ *
+ * Amazon pages carry feature bullets like "Samsung Moonlight Storage Upgrades
+ * Lag Free" — no model number, no size, no specification. A REAL product title
+ * almost always carries at least one of: a digit, a parenthesis, or a spec token
+ * (GB / RAM / mAh / inch / 5G / MP ...).
+ *
+ * Such a title is treated as WEAK: the metadata and search fallbacks are tried,
+ * and a weak title is only used if nothing better turns up.
+ */
+function looksLikeMarketingCopy(title) {
+  const t = String(title || '').trim();
+  if (t.length < 12) return false;
+  const hasDigit = /\d/.test(t);
+  const hasParen = /[()]/.test(t);
+  const hasSpec = /\b(gb|tb|ram|rom|mah|inch|cm|mm|mp|5g|4g|lte|oled|amoled|led|smart|pro|max|plus|series|edition|bluetooth|wireless|headphone|earbud|speaker|watch|shoe|shirt|kurta|saree|jeans|top|camera|laptop|mobile|phone|tablet|charger|cable|bag|bottle)\b/i.test(t);
+  return !hasDigit && !hasParen && !hasSpec;
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -1502,7 +1524,9 @@ function registerHandlers(bot) {
       // the name, the price and the search fallback all work from the real url,
       // instead of each path discovering the problem separately.
       if (isShortLink(url)) {
+        const expandStart = Date.now();
         const expanded = await expandShortLink(url).catch(() => null);
+        console.log('track: short-link expansion took ' + (Date.now() - expandStart) + 'ms');
         if (expanded && expanded !== url) {
           console.log('track: expanded short link -> ' + String(expanded).slice(0, 90));
           url = expanded;
@@ -1973,6 +1997,7 @@ module.exports = async (req, res) => {
 // Exposed for unit tests.
 module.exports._internals = {
   betterTitle,
+  looksLikeMarketingCopy,
   escapeHtml,
   productDocId,
   extractUrl,

@@ -60,6 +60,12 @@ function channelId() {
   );
 }
 // Default is 20% — anything at or above it is posted.
+// The public channel link used on the "More Deals" button. It was referenced but
+// never declared, so every post threw "CHANNEL_URL is not defined" — the deals
+// channel silently received nothing at all.
+const CHANNEL_URL =
+  process.env.TELEGRAM_CHANNEL_URL || process.env.CHANNEL_LINK || 'https://t.me/Ai_PriceAlert';
+
 const MIN_DISCOUNT = parseFloat(
   process.env.MIN_DISCOUNT || process.env.DEALS_MIN_DISCOUNT || '20'
 );

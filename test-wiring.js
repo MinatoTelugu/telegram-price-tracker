@@ -108,6 +108,58 @@ for (const [name, fn] of calls) {
     (unreachable.length ? ' (missing: ' + unreachable.join(', ') + ')' : ''), unreachable.length === 0);
 }
 
+// --- every module must at least LOAD ----------------------------------------
+// A ReferenceError at call time is invisible to a parse check; a missing export
+// or a bad require is visible immediately.
+for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './lib/titles.js']) {
+  let threw = null;
+  try {
+    require(mod);
+  } catch (err) {
+    if (!/Cannot find module/.test(String(err.message))) threw = err;
+  }
+  check(mod + ' loads', !threw);
+}
+
+// --- the short-link expander must never return a foreign page ---------------
+// The reported logs show "expanded via search -> https://andro.io/app/hbs-travkart"
+// for a Flipkart product. The scraper then read that page, so the title, price
+// and image came from an unrelated site.
+{
+  const { acceptExpansion } = require('./lib/shortlink');
+  const rejects = [
+    ['https://andro.io/app/hbs-travkart', 'the reported foreign page'],
+    ['https://example.com/somewhere', 'an unrelated site'],
+    ['https://fkrt.clnk.in/DchQ', 'a still-unresolved short link'],
+    ['not a url at all', 'garbage'],
+    [null, 'nothing'],
+  ];
+  for (const [url, label] of rejects) {
+    check('the expander refuses ' + label, acceptExpansion(url) === null);
+  }
+  const keeps = [
+    ['https://www.amazon.in/dp/B0G81TPT89', 'https://www.amazon.in/dp/B0G81TPT89'],
+    ['https://www.flipkart.com/samsung-galaxy-m17/p/itm123?pid=MOB1',
+      'https://www.flipkart.com/samsung-galaxy-m17/p/itm123?pid=MOB1'],
+  ];
+  for (const [url, want] of keeps) {
+    check('the expander keeps ' + url, acceptExpansion(url) === want);
+  }
+  // A redirector carries the real destination in ?url= — unwrap it.
+  const wrapped = 'https://linksredirect.com/?cid=327213&url=https%3A%2F%2Fwww.flipkart.com%2Fp%2Fitm1%3Fpid%3DMOB1';
+  check('the expander unwraps a redirector',
+    acceptExpansion(wrapped) === 'https://www.flipkart.com/p/itm1?pid=MOB1');
+}
+
+// --- deals.js must declare the constants it uses ----------------------------
+// CHANNEL_URL was referenced on the "More Deals" button but never declared, so
+// every deals post threw "CHANNEL_URL is not defined" and the channel received
+// nothing at all.
+{
+  const deals = fs.readFileSync(__dirname + '/api/deals.js', 'utf8');
+  check('deals.js declares CHANNEL_URL', /^const CHANNEL_URL =/m.test(deals));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

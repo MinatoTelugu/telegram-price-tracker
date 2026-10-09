@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-73 (2026-10-09)';
+const BUILD = 'names-74 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -65,6 +65,8 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || {
   PRODUCTS: 'products',
   PRICE_HISTORY: 'price_history',
 };
+
+const { cleanHistory } = require('../lib/cleanHistory');
 
 const MARKETPLACE_LABEL = { amazon: '🛒 Amazon', flipkart: '🛍️ Flipkart' };
 
@@ -1676,6 +1678,86 @@ function registerHandlers(bot) {
       console.error('broadcast failed:', err);
       try {
         await ctx.reply('Broadcast failed: ' + String(err.message).slice(0, 200));
+      } catch (e) {
+        /* nothing more we can do */
+      }
+    }
+  });
+
+  // /cleanhistory_<TOKEN>        — DRY RUN: reports what would be removed
+  // /cleanhistory_apply_<TOKEN>  — removes it
+  //
+  // A one-off repair for price history written by the old price bug, which
+  // recorded an exchange-offer figure as the price (a ₹19,999 phone logged at
+  // ₹10,490). The chart and the lowest/average stats are derived from these
+  // readings, so removing them corrects the page. ADMIN ONLY, and the token is
+  // CRON_SECRET, so the command is useless to anyone else.
+  bot.hears(/^\/cleanhistory(_apply)?_([A-Za-z0-9_-]+)\b/, async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      const adminId = await resolveAdminId(ctx);
+      if (!adminId || String(ctx.from.id) !== String(adminId)) return; // invisible to others
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+      const secret = process.env.CRON_SECRET;
+      if (secret && String(ctx.match[2]) !== secret) {
+        await ctx.reply('That token is not right.');
+        return;
+      }
+      const apply = Boolean(ctx.match[1]);
+
+      await ctx.reply(
+        apply
+          ? '🧹 Cleaning the price history — removing readings that fail the sanity check…'
+          : '🔍 <b>Dry run</b> — nothing will be deleted. Checking the price history…',
+        { parse_mode: 'HTML' }
+      );
+
+      const report = await cleanHistory({
+        apply,
+        log: (line) => console.log('clean-history: ' + line),
+      });
+
+      const lines = [
+        apply ? '🧹 <b>Price history cleaned.</b>' : '🔍 <b>Dry run complete.</b>',
+        '',
+        'Products scanned: ' + report.scanned,
+        'Products with bad readings: ' + report.affected,
+        apply ? 'Readings removed: ' + report.removed : 'Readings that WOULD go: ' + report.removed,
+      ];
+      if (report.refused) lines.push('Refused (too much of the history): ' + report.refused);
+      if (apply) lines.push('lastPrice re-pointed: ' + report.lastPriceFixed);
+
+      const shown = report.products.filter((x) => x.status !== 'refused').slice(0, 8);
+      if (shown.length) {
+        lines.push('');
+        shown.forEach((x) => {
+          lines.push(
+            '• ' + escapeHtml(String(x.name).slice(0, 40)) + ' — ' + x.removed + ' reading(s)' +
+              (x.droppedPrices && x.droppedPrices.length ? ' at ₹' + x.droppedPrices.join(', ₹') : '')
+          );
+        });
+      }
+      if (report.affected > shown.length) {
+        lines.push('…and ' + (report.affected - shown.length) + ' more.');
+      }
+      if (!apply && report.removed > 0) {
+        lines.push('');
+        lines.push('Nothing was deleted. To remove them, send:');
+        lines.push('<code>/cleanhistory_apply_' + escapeHtml(String(secret || 'TOKEN')) + '</code>');
+      }
+      if (!apply && report.removed === 0) {
+        lines.push('');
+        lines.push('Nothing failed the check — the history is already clean.');
+      }
+
+      await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('cleanhistory command failed', err);
+      try {
+        await ctx.reply('Cleanup failed: ' + String(err.message).slice(0, 200));
       } catch (e) {
         /* nothing more we can do */
       }

@@ -6,6 +6,51 @@ for 30 days, and sends an alert when the price drops.
 
 Everything runs on **Vercel serverless functions** — no long-running server.
 
+### Repairing a price history polluted by the old price bug
+
+An earlier version of the scraper took the first rupee figure on a product page,
+which could be an exchange-offer amount rather than the price — a ₹19,999 phone
+was recorded at ₹10,490. The scraper is fixed, so no new bad readings appear, but
+the old ones are still in Firestore, and the price-history page derives its chart
+and its lowest/average stats from them.
+
+`lib/cleanHistory.js` removes those readings. It is a **dry run by default** —
+nothing is deleted until you explicitly apply it.
+
+Run it any of three ways:
+
+```
+# 1. from Telegram, as the admin (dry run first)
+/cleanhistory_<CRON_SECRET>          # reports what would be removed
+/cleanhistory_apply_<CRON_SECRET>    # removes it
+
+# 2. from the deployed app
+https://<your-app>/api/clean-history?secret=<CRON_SECRET>
+https://<your-app>/api/clean-history?secret=<CRON_SECRET>&apply=1
+...&id=<docId>                       # just one product
+
+# 3. from a terminal, with the app's Firebase credentials in the environment
+node scripts/clean-history.js        # dry run
+node scripts/clean-history.js --apply
+```
+
+What it treats as bad, and what it deliberately leaves alone:
+
+* A reading is removed only when it is **far below the product's high readings**
+  (under 60% of them by default) **and does not last** — the readings either side
+  come back at least 25% higher. That is the signature of a bad scrape.
+* A **genuine price drop is kept.** A real drop stays down, so it is not an
+  outlier relative to the product's own readings; and a low price that holds for
+  more than three consecutive readings is treated as real regardless.
+* A product with fewer than five readings is left alone — there is no baseline
+  worth trusting.
+* If a product would lose more than half its readings, it is **refused** and
+  reported rather than gutted.
+
+After a cleanup the page corrects itself on the next load: the chart and the
+stats are computed from the readings that remain, and the product's `lastPrice`
+is re-pointed at the newest surviving reading.
+
 ## How it works
 
 1. You send the bot an Amazon or Flipkart link.

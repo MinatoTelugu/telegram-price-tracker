@@ -263,6 +263,35 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the scraper last-resort path does too', /timeoutMs: 20000/.test(scr));
 }
 
+// --- the hosted Amazon API must be diagnosable -------------------------------
+// "amazon api (omkar): status 404" was all we had, which cannot distinguish an
+// unknown product from a wrong path or a rejected key. And the Omkar path was a
+// single guess: their docs show two.
+{
+  const api = fs.readFileSync(__dirname + '/lib/amazonapi.js', 'utf8');
+  check('both documented Omkar paths are tried',
+    /\/amazon\/product-details,\/products\/details/.test(api));
+  check('the Omkar path is overridable', /OMKAR_API_PATH/.test(api));
+  check('a failed call logs the response body', /body=/.test(api));
+  check('the hosted-API timeout is no longer 12s', !/AMAZON_API_TIMEOUT_MS \|\| '12000'/.test(api));
+  check('the code says RapidAPI IS Omkar', /RapidAPI listing[\s\S]{0,200}Omkar/.test(api));
+
+  const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
+  check('.env.example documents OMKAR_API_KEY', /OMKAR_API_KEY=/.test(env));
+  check('.env.example explains the RapidAPI/Omkar relationship',
+    /RapidAPI listing IS Omkar Cloud/.test(env));
+
+  const { amazonApiConfigured } = require('./lib/amazonapi');
+  const saved = { r: process.env.RAPIDAPI_KEY, o: process.env.OMKAR_API_KEY };
+  delete process.env.RAPIDAPI_KEY;
+  delete process.env.OMKAR_API_KEY;
+  check('with neither key it is not configured', amazonApiConfigured() === false);
+  process.env.OMKAR_API_KEY = 'k';
+  check('an Omkar key alone configures it', amazonApiConfigured() === true);
+  process.env.RAPIDAPI_KEY = saved.r;
+  process.env.OMKAR_API_KEY = saved.o;
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

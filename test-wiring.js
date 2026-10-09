@@ -130,7 +130,9 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const rejects = [
     ['https://andro.io/app/hbs-travkart', 'the reported foreign page'],
     ['https://example.com/somewhere', 'an unrelated site'],
-    ['https://fkrt.clnk.in/DchQ', 'a still-unresolved short link'],
+    ['https://fkrt.clnk.in/DchQ', 'a still-unresolved fkrt.clnk.in link'],
+    ['https://dl.flipkart.com/s/96_3ZCuuuN', 'a still-unresolved dl.flipkart.com link'],
+    ['https://amzn.in/d/0iqccib1', 'a still-unresolved amzn.in link'],
     ['not a url at all', 'garbage'],
     [null, 'nothing'],
   ];
@@ -138,6 +140,11 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     check('the expander refuses ' + label, acceptExpansion(url) === null);
   }
   const keeps = [
+    // The Flipkart app-share url is the REAL product url — it carries the pid.
+    // An earlier version rejected it by reusing isShortLink, which broke every
+    // dl.flipkart.com link with "I could not open that short link".
+    ['https://www.flipkart.com/product/p/itme?pid=MOBHKZF3DGME8JHG',
+      'https://www.flipkart.com/product/p/itme?pid=MOBHKZF3DGME8JHG'],
     ['https://www.amazon.in/dp/B0G81TPT89', 'https://www.amazon.in/dp/B0G81TPT89'],
     ['https://www.flipkart.com/samsung-galaxy-m17/p/itm123?pid=MOB1',
       'https://www.flipkart.com/samsung-galaxy-m17/p/itm123?pid=MOB1'],

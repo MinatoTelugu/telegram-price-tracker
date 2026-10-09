@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-79 (2026-10-09)';
+const BUILD = 'names-80 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -67,6 +67,15 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || {
 };
 
 const { cleanHistory } = require('../lib/cleanHistory');
+const {
+  isErrorPageTitle,
+  isPlaceholderTitle,
+  isGenericStoreTitle,
+  looksLikeMarketingCopy,
+  isUsableTitle,
+  STORE_NAMES,
+  GENERIC_STORE_WORDS,
+} = require('../lib/titles');
 
 const MARKETPLACE_LABEL = { amazon: '🛒 Amazon', flipkart: '🛍️ Flipkart' };
 
@@ -128,9 +137,6 @@ function prettifySlug(slug) {
 }
 
 /** Path segments that are placeholders, not product names. */
-const PLACEHOLDER_SLUGS = new Set([
-  'product', 'products', 'item', 'items', 'dl', 'p', 'dp', 'd', 'gp', 'buy', 'shop', 'store', 'detail', 'details',
-]);
 
 /**
  * Titles that belong to an ERROR PAGE, not a product. When a store refuses our
@@ -140,28 +146,8 @@ const PLACEHOLDER_SLUGS = new Set([
  * (or a prefix of it), never as a substring, so a real product whose name
  * happens to contain one of these words is unaffected.
  */
-const ERROR_PAGE_TITLES = [
-  /^\s*\d{3}\b/,                       // "503 - Service Unavailable", "403 Forbidden"
-  /^\s*service unavailable\b/i,
-  /^\s*access denied\b/i,
-  /^\s*robot check\b/i,
-  /^\s*are you a robot\b/i,
-  /^\s*just a moment\b/i,               // Cloudflare interstitial
-  /^\s*attention required\b/i,
-  /^\s*verify(ing)? (you|your)/i,
-  /^\s*(captcha|checking your browser)\b/i,
-  /^\s*(error|not found|page not found|404|bad gateway|gateway timeout)\s*$/i,
-  /^\s*amazon\.(in|com)\s*$/i,
-  /^\s*flipkart\.com\s*$/i,
-];
 
 /** True when a scraped title is really an error/robot-check page heading. */
-function isErrorPageTitle(title) {
-  const t = String(title || '').trim();
-  if (!t) return false;
-  return ERROR_PAGE_TITLES.some((re) => re.test(t));
-}
-
 function isPlaceholderSlug(slug) {
   const s = String(slug || '').toLowerCase();
   return !s || PLACEHOLDER_SLUGS.has(s) || s.length < 4;
@@ -172,23 +158,6 @@ function isPlaceholderSlug(slug) {
  * OR a raw product id ("B0DFHCZMWY", "MOBHETX6NVUH8VPG") must be treated as
  * missing, so it gets re-derived instead of being shown as a name.
  */
-function isPlaceholderTitle(title, productId) {
-  const s = String(title || '').trim();
-  if (!s) return true;
-  if (isErrorPageTitle(s)) return true;
-  if (productId && s.toLowerCase() === String(productId).toLowerCase()) return true;
-  if (PLACEHOLDER_SLUGS.has(s.toLowerCase())) return true;
-  if (s.length < 4) return true;
-  // ASIN / FSN style: all uppercase letters and digits, no spaces.
-  if (/^[A-Z0-9]{10,}$/.test(s)) return true;
-  // A short-link SLUG: one token, mixed case with digits, no spaces — the shape
-  // of an amzn.in / dl.flipkart.com path segment, never a product name.
-  if (!/\s/.test(s) && s.length <= 12 && /[0-9]/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s)) {
-    return true;
-  }
-  return false;
-}
-
 /**
  * Derive a product name straight from the link — no network needed.
  * Flipkart links carry the name as the path slug, and Amazon links usually do
@@ -739,12 +708,12 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     }
     if (viaConverter) {
       const fromLink = titleFromUrl(viaConverter);
-      if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
+      if (isUsableTitle(fromLink, result.productId)) {
         info.title = fromLink;
         info.resolvedUrl = viaConverter;
       }
     }
-    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
+    if (!isUsableTitle(info.title, result.productId)) {
       const resolved = await withTimeout(
         resolveProductName({
           marketplace: result.marketplace,
@@ -756,7 +725,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
         4000
       ).catch(() => null);
       const name = (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '');
-      if (name && !isPlaceholderTitle(name, result.productId)) {
+      if (isUsableTitle(name, result.productId)) {
         info.title = name;
         if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
       }
@@ -764,7 +733,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
 
     // Still nothing? Our IP is refused by the store (Amazon especially). Ask a
     // metadata service, which fetches the page from its own servers.
-    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
+    if (!isUsableTitle(info.title, result.productId)) {
       const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
       console.log(
         'track: metadata fallback -> ' +
@@ -777,7 +746,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
           isGenericStoreTitle(meta.title) ? null : meta.title,
           titleFromUrl(result.cleanUrl || '')
         );
-        if (named && !isPlaceholderTitle(named, result.productId)) {
+        if (isUsableTitle(named, result.productId)) {
           info.title = named;
           console.log('track: recovered the name via metadata — ' + String(named).slice(0, 70));
         }
@@ -795,7 +764,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     // Still nothing? Read the page THROUGH a reader service. Amazon refuses this
     // host, so this is the route that can actually see the product page — and
     // its text gives us both the name and a price.
-    if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title) || info.price == null) {
+    if (!isUsableTitle(info.title, result.productId) || info.price == null) {
       const page = await fetchReadablePage(result.cleanUrl || result.affiliateUrl).catch(() => null);
       if (page) {
         if (page.title) {
@@ -803,7 +772,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
             isGenericStoreTitle(page.title) ? null : page.title,
             titleFromUrl(result.cleanUrl || '')
           );
-          if (named && !isPlaceholderTitle(named, result.productId)) {
+          if (isUsableTitle(named, result.productId)) {
             info.title = named;
             console.log('track: name recovered via the reader — ' + String(named).slice(0, 70));
           }
@@ -828,8 +797,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     if (
       result.marketplace === 'amazon' &&
       amazonApiConfigured() &&
-      (isPlaceholderTitle(info.title, result.productId) ||
-        looksLikeMarketingCopy(info.title) ||
+      (!isUsableTitle(info.title, result.productId) ||
         info.price == null ||
         !info.imageUrl)
     ) {
@@ -840,7 +808,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
             isGenericStoreTitle(item.title) ? null : item.title,
             info.title || titleFromUrl(result.cleanUrl || '')
           );
-          if (named && !isPlaceholderTitle(named, result.productId)) info.title = named;
+          if (isUsableTitle(named, result.productId)) info.title = named;
         }
         if (info.price == null && item.price != null) info.price = item.price;
         if (!info.imageUrl && item.image) info.imageUrl = item.image;
@@ -952,46 +920,12 @@ function betterTitle(scrapedTitle, urlTitle) {
  * Such a title is treated as WEAK: the metadata and search fallbacks are tried,
  * and a weak title is only used if nothing better turns up.
  */
-function looksLikeMarketingCopy(title) {
-  const t = String(title || '').trim();
-  if (t.length < 12) return false;
-  const hasDigit = /\d/.test(t);
-  const hasParen = /[()]/.test(t);
-  const hasSpec = /\b(gb|tb|ram|rom|mah|inch|cm|mm|mp|5g|4g|lte|oled|amoled|led|smart|pro|max|plus|series|edition|bluetooth|wireless|headphone|earbud|speaker|watch|shoe|shirt|kurta|saree|jeans|top|camera|laptop|mobile|phone|tablet|charger|cable|bag|bottle)\b/i.test(t);
-  return !hasDigit && !hasParen && !hasSpec;
-}
-
 /**
  * A generic store-page name, not a product. The metadata service and the search
  * API can both return the STORE's own page title ("Amazon.in", "Flipkart") when
  * the link they were given was a bare short link — which is worse than the name
  * we already had.
  */
-const STORE_NAMES = 'amazon(\\.[a-z.]{2,6})?( india)?|flipkart|myntra|ajio|nykaa|meesho|snapdeal|tatacliq';
-const GENERIC_STORE_WORDS =
-  'shop online|online shopping|electronics store|online store|buy online|home page|electronics';
-
-function isGenericStoreTitle(title) {
-  const t = String(title || '').trim().toLowerCase();
-  if (!t) return true;
-
-  // The WHOLE title must be the store name (or a generic store phrase). An
-  // earlier version matched any title that merely STARTED with a store name,
-  // which threw away Amazon's og:title — it reads
-  // "Amazon.in: <real product title> : Electronics" — and made every Amazon card
-  // fall back to "This product".
-  const whole = new RegExp('^(' + STORE_NAMES + '|' + GENERIC_STORE_WORDS + ')$');
-
-  // Judge the CORE too: strip a leading store prefix and a trailing store or
-  // "Electronics" suffix, so "Amazon.in: Electronics" is still caught while
-  // "Amazon.in: Samsung Galaxy M17 5G : Electronics" is kept.
-  const core = t
-    .replace(new RegExp('^(' + STORE_NAMES + ')\\s*[:\\-–]\\s*', 'i'), '')
-    .replace(new RegExp('\\s*[:\\-–]\\s*(' + STORE_NAMES + '|' + GENERIC_STORE_WORDS + ')$', 'i'), '')
-    .trim();
-
-  return whole.test(t) || whole.test(core);
-}
 
 /**
  * Turn a raw page title into the CLEAN product name.
@@ -1119,6 +1053,14 @@ function formatStamp(date) {
 }
 
 /**
+ * Is this a usable PRODUCT NAME?
+ *
+ * Every place that accepts a title must ask this, and only this. Accepting on
+ * isPlaceholderTitle alone is what let an A+ marketing mashup ("IQOO Prismatic
+ * Dimensity Processor OriginOS") from the metadata/reader/hosted-API source
+ * overwrite a better title and reach the card.
+ */
+/**
  * The name to SHOW on a card. Never an error page ("503 - Service Unavailable
  * Error") and never a bare product id if anything better exists — a product doc
  * may still carry a bad title written before the guard below existed.
@@ -1129,14 +1071,7 @@ function displayTitle(title, productId) {
   // Best first, and never hide a usable name: the cleaned form, then the raw
   // title (cleaning can be lossy), then the last resort.
   for (const candidate of [cleaned, raw]) {
-    if (
-      candidate &&
-      !isPlaceholderTitle(candidate, productId) &&
-      !isErrorPageTitle(candidate) &&
-      !isGenericStoreTitle(candidate)
-    ) {
-      return candidate;
-    }
+    if (isUsableTitle(candidate, productId)) return candidate;
   }
   return 'This product';
 }
@@ -2151,7 +2086,7 @@ function registerHandlers(bot) {
         imageUrl: null,
       };
 
-      const needsName = () => isPlaceholderTitle(info.title, result.productId);
+      const needsName = () => !isUsableTitle(info.title, result.productId);
       const canUseConverterLink =
         needsName() && result.affiliateUrl && result.affiliateUrl !== result.cleanUrl;
 
@@ -2188,7 +2123,7 @@ function registerHandlers(bot) {
       // fetching the store itself.
       if (viaConverter) {
         const fromLink = titleFromUrl(viaConverter);
-        if (fromLink && !isPlaceholderTitle(fromLink, result.productId)) {
+        if (isUsableTitle(fromLink, result.productId)) {
           info.title = fromLink;
           info.resolvedUrl = viaConverter;
         }
@@ -2209,7 +2144,7 @@ function registerHandlers(bot) {
           );
           const name =
             (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '') || null;
-          if (name && !isPlaceholderTitle(name, result.productId)) {
+          if (isUsableTitle(name, result.productId)) {
             info.title = name;
             if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
           }
@@ -2561,6 +2496,7 @@ module.exports._internals = {
   titleFromUrl,
   isPlaceholderTitle,
   isErrorPageTitle,
+  isUsableTitle,
   displayTitle,
   webAppBase,
   upsertUser,

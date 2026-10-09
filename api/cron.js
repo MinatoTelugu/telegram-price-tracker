@@ -24,6 +24,7 @@
 
 const axios = require('axios');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
+const { isUsableTitle } = require('../lib/titles');
 const { fetchMetadata } = require('../lib/metadata');
 
 // Load Firebase defensively: missing credentials must not crash the process
@@ -118,14 +119,15 @@ async function sendTelegramMessage(chatId, text, replyMarkup, attempt) {
 }
 
 /** True when a stored title is missing, a placeholder, or a raw product id. */
+/**
+ * Whether a stored title needs replacing.
+ *
+ * This used to be a weaker rule than the bot's, and the two drifted — which is
+ * how an A+ marketing mashup could be written into a product document. It now
+ * defers to the single shared definition in lib/titles.js.
+ */
 function titleLooksUnusable(title, productId) {
-  const s = String(title || '').trim();
-  if (!s) return true;
-  if (productId && s.toLowerCase() === String(productId).toLowerCase()) return true;
-  if (s.length < 4) return true;
-  // id-like: no spaces, letters and digits only (e.g. ucc25298ca0, B0DFHCZMWY)
-  if (!/\s/.test(s) && /^[A-Za-z0-9]{10,}$/.test(s)) return true;
-  return false;
+  return !isUsableTitle(title, productId);
 }
 
 function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow) {

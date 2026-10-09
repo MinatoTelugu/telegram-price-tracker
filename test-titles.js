@@ -35,18 +35,20 @@ function grab(name) {
   return m[0];
 }
 
-// The error-page/placeholder guards need their constant sets too.
-const constSrc =
-  src.slice(src.indexOf('const PLACEHOLDER_SLUGS'), src.indexOf('const ERROR_PAGE_TITLES')) +
-  src.slice(src.indexOf('const ERROR_PAGE_TITLES'), src.indexOf('function isErrorPageTitle')) +
-  src.slice(src.indexOf('const STORE_NAMES'), src.indexOf('function isGenericStoreTitle'));
-eval(constSrc.replace(/^const /gm, 'var '));
-eval(grab('isErrorPageTitle'));
-eval(grab('isPlaceholderTitle'));
+// The title rules now live in ONE shared module, required by both the bot and
+// the cron. Destructure them so the display-layer functions below (still in
+// api/telegram.js) can see them when they are evaluated.
+const {
+  isErrorPageTitle,
+  isPlaceholderTitle,
+  isGenericStoreTitle,
+  looksLikeMarketingCopy,
+  isUsableTitle,
+  STORE_NAMES,
+  GENERIC_STORE_WORDS,
+} = require('./lib/titles');
 eval(grab('displayTitle'));
-eval(grab('looksLikeMarketingCopy'));
 eval(grab('betterTitle'));
-eval(grab('isGenericStoreTitle'));
 eval(grab('cleanProductName'));
 eval(grab('priceFromText'));
 // firstRealPrice and parsePrice live in the scraper, so read that file too.
@@ -287,6 +289,49 @@ check('the reader price scan finds a labelled price', priceFromText('Deal price:
   check('fetchMetadata reads a price when the service publishes one', /data\.price/.test(meta));
   check('fetchMetadata returns the price', /\n\s*price,/.test(meta));
   check('a metadata price is used in the enrichment', /price recovered via metadata/.test(src));
+}
+
+// --- A+ marketing copy must never be a title --------------------------------
+// The reported card read "☀️ IQOO Prismatic Dimensity Processor OriginOS" — a
+// mashup of Amazon A+ feature bullets, not a product name. The accept-sites only
+// checked isPlaceholderTitle, so a title like this from the metadata / reader /
+// hosted-API source overwrote a better one.
+check('an A+ feature mashup is NOT a usable title',
+  isUsableTitle('IQOO Prismatic Dimensity Processor OriginOS', 'B0G81TPT89') === false);
+check('a feature-bullet mashup is NOT a usable title',
+  isUsableTitle('Samsung Moonlight Storage Upgrades Lag Free', 'B0G81TPT89') === false);
+check('a marketing line is NOT a usable title',
+  isUsableTitle('Monster Camera Turn Moments Into Stories', 'B0G81TPT89') === false);
+check('...and displayTitle does not show it',
+  displayTitle('IQOO Prismatic Dimensity Processor OriginOS', 'B0G81TPT89') === 'This product');
+
+// ...while a real name without a model number still is.
+check('a real name without a digit is still usable',
+  isUsableTitle('Boat Rockerz Bluetooth Headphones', 'B0G81TPT89') === true);
+check('a real name with a model number is usable',
+  isUsableTitle('iQOO Z9s 5G (Prismatic Green, 8GB RAM, 128GB Storage)', 'B0G81TPT89') === true);
+check('displayTitle keeps the real name',
+  displayTitle('iQOO Z9s 5G (Prismatic Green, 8GB RAM, 128GB Storage)', 'B0G81TPT89') === 'iQOO Z9s 5G');
+
+// --- every accept-site must use the one predicate ---------------------------
+// Accepting on isPlaceholderTitle alone is the omission that caused the bug.
+{
+  const risky = src.match(/!isPlaceholderTitle\((?:named|name|fromLink|item\.title)/g) || [];
+  check('no fallback accepts a title on isPlaceholderTitle alone', risky.length === 0);
+  check('the metadata fallback uses isUsableTitle',
+    /meta[\s\S]{0,600}isUsableTitle/.test(src) || /isUsableTitle[\s\S]{0,600}meta\.image/.test(src));
+  check('the reader fallback uses isUsableTitle', /name recovered via the reader/.test(src));
+  check('the hosted-API fallback uses isUsableTitle', /amazon data via the hosted API/.test(src));
+}
+
+// --- the cron shares the same definition ------------------------------------
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the cron requires the shared title rules', /require\('\.\.\/lib\/titles'\)/.test(cron));
+  check('the cron defers to isUsableTitle', /!isUsableTitle\(title, productId\)/.test(cron));
+  check('the cron no longer has its own weaker rule',
+    !/id-like: no spaces, letters and digits only/.test(cron));
+  check('lib/titles.js exists as the single source', fs.existsSync(__dirname + '/lib/titles.js'));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

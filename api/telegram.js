@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-78 (2026-10-09)';
+const BUILD = 'names-79 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -42,7 +42,7 @@ const {
   extractFlipkartPid,
 } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
-const { fetchProduct, resolveProductName } = require('../lib/scraper');
+const { fetchProduct, resolveProductName, firstRealPrice } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
 const { fetchReadablePage } = require('../lib/reader');
 const { lookupAsin, amazonApiConfigured } = require('../lib/amazonapi');
@@ -181,6 +181,11 @@ function isPlaceholderTitle(title, productId) {
   if (s.length < 4) return true;
   // ASIN / FSN style: all uppercase letters and digits, no spaces.
   if (/^[A-Z0-9]{10,}$/.test(s)) return true;
+  // A short-link SLUG: one token, mixed case with digits, no spaces — the shape
+  // of an amzn.in / dl.flipkart.com path segment, never a product name.
+  if (!/\s/.test(s) && s.length <= 12 && /[0-9]/.test(s) && /[a-z]/.test(s) && /[A-Z]/.test(s)) {
+    return true;
+  }
   return false;
 }
 
@@ -777,6 +782,13 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
           console.log('track: recovered the name via metadata — ' + String(named).slice(0, 70));
         }
         if (!info.imageUrl && meta.image) info.imageUrl = meta.image;
+        // The price too, when the service published one — it fetches the page
+        // from its own servers, so it can see what our IP is refused.
+        if (info.price == null && meta.price != null) {
+          info.price = meta.price;
+          if (meta.currency) info.currency = meta.currency;
+          console.log('track: price recovered via metadata — ' + meta.price);
+        }
       }
     }
 
@@ -955,12 +967,30 @@ function looksLikeMarketingCopy(title) {
  * the link they were given was a bare short link — which is worse than the name
  * we already had.
  */
+const STORE_NAMES = 'amazon(\\.[a-z.]{2,6})?( india)?|flipkart|myntra|ajio|nykaa|meesho|snapdeal|tatacliq';
+const GENERIC_STORE_WORDS =
+  'shop online|online shopping|electronics store|online store|buy online|home page|electronics';
+
 function isGenericStoreTitle(title) {
   const t = String(title || '').trim().toLowerCase();
   if (!t) return true;
-  return /^(amazon(\.in|\.com|\.co\.uk|\.de|\.ca|\.com\.au| india)?|flipkart|myntra|ajio|nykaa|meesho|snapdeal|tatacliq|shop online|online shopping|electronics store|buy online|home page)\b/i.test(
-    t
-  );
+
+  // The WHOLE title must be the store name (or a generic store phrase). An
+  // earlier version matched any title that merely STARTED with a store name,
+  // which threw away Amazon's og:title — it reads
+  // "Amazon.in: <real product title> : Electronics" — and made every Amazon card
+  // fall back to "This product".
+  const whole = new RegExp('^(' + STORE_NAMES + '|' + GENERIC_STORE_WORDS + ')$');
+
+  // Judge the CORE too: strip a leading store prefix and a trailing store or
+  // "Electronics" suffix, so "Amazon.in: Electronics" is still caught while
+  // "Amazon.in: Samsung Galaxy M17 5G : Electronics" is kept.
+  const core = t
+    .replace(new RegExp('^(' + STORE_NAMES + ')\\s*[:\\-–]\\s*', 'i'), '')
+    .replace(new RegExp('\\s*[:\\-–]\\s*(' + STORE_NAMES + '|' + GENERIC_STORE_WORDS + ')$', 'i'), '')
+    .trim();
+
+  return whole.test(t) || whole.test(core);
 }
 
 /**
@@ -982,7 +1012,17 @@ function cleanProductName(title) {
 
   t = t.split(/\s*\|\s*/)[0];
 
-  t = t.replace(/\s*[:\-–]\s*(buy\b|amazon\.in|flipkart\.com|online at best price|price in india).*$/i, '');
+  // "Amazon.in: <name> : Electronics" -> "<name>". The store name is page
+  // furniture, not part of the product name.
+  t = t.replace(
+    new RegExp('^(' + STORE_NAMES + ')\\s*[:\\-–]\\s*', 'i'),
+    ''
+  );
+  t = t.replace(
+    new RegExp('\\s*[:\\-–]\\s*(' + STORE_NAMES + '|' + GENERIC_STORE_WORDS + ')\\s*$', 'i'),
+    ''
+  );
+  t = t.replace(/\s*[:\-–]\s*(buy\b|online at best price|price in india).*$/i, '');
   t = t.replace(/\s+(online at best price|price in india|buy online|free shipping|at best price).*$/i, '');
 
   // Bracketed variants — only when they actually contain a variant/spec word, so
@@ -1013,13 +1053,21 @@ function cleanProductName(title) {
 function priceFromText(text) {
   const t = String(text || '');
   if (!t) return null;
+  // Prefer a figure that is explicitly labelled a price.
   const near = /(?:price|offer price|current price|deal price)[^\d₹]{0,40}(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t);
-  const any = /(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t);
-  const m = near || any;
-  if (!m) return null;
   // parseFloat, not parseInt: stripping the dot turned "1,499.50" into 149950.
-  const n = Math.round(parseFloat(String(m[1]).replace(/,/g, '')));
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const toNumber = (raw) => {
+    const n = Math.round(parseFloat(String(raw).replace(/,/g, '')));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  if (near) {
+    const v = toNumber(near[1]);
+    if (v != null) return v;
+  }
+  // Otherwise use the exchange-aware scan from the scraper. Taking the FIRST
+  // rupee figure outright is what reported an exchange-offer amount as the
+  // price, and this reader path had exactly that bug.
+  return firstRealPrice(t);
 }
 
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
@@ -1076,9 +1124,19 @@ function formatStamp(date) {
  * may still carry a bad title written before the guard below existed.
  */
 function displayTitle(title, productId) {
-  const cleaned = cleanProductName(title);
-  if (cleaned && !isPlaceholderTitle(cleaned, productId) && !isErrorPageTitle(cleaned)) {
-    return cleaned;
+  const raw = String(title || '').trim();
+  const cleaned = cleanProductName(raw);
+  // Best first, and never hide a usable name: the cleaned form, then the raw
+  // title (cleaning can be lossy), then the last resort.
+  for (const candidate of [cleaned, raw]) {
+    if (
+      candidate &&
+      !isPlaceholderTitle(candidate, productId) &&
+      !isErrorPageTitle(candidate) &&
+      !isGenericStoreTitle(candidate)
+    ) {
+      return candidate;
+    }
   }
   return 'This product';
 }

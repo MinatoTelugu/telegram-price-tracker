@@ -38,7 +38,8 @@ function grab(name) {
 // The error-page/placeholder guards need their constant sets too.
 const constSrc =
   src.slice(src.indexOf('const PLACEHOLDER_SLUGS'), src.indexOf('const ERROR_PAGE_TITLES')) +
-  src.slice(src.indexOf('const ERROR_PAGE_TITLES'), src.indexOf('function isErrorPageTitle'));
+  src.slice(src.indexOf('const ERROR_PAGE_TITLES'), src.indexOf('function isErrorPageTitle')) +
+  src.slice(src.indexOf('const STORE_NAMES'), src.indexOf('function isGenericStoreTitle'));
 eval(constSrc.replace(/^const /gm, 'var '));
 eval(grab('isErrorPageTitle'));
 eval(grab('isPlaceholderTitle'));
@@ -232,6 +233,60 @@ check('displayTitle passes a clean name through',
     /parse_mode:\s*'HTML'/.test(convertErr));
   check('the conversion-error strings really do contain markup',
     /unsupported_store:[\s\S]{0,120}<b>/.test(src));
+}
+
+// --- an og:title with a store prefix is a REAL title -------------------------
+// THE bug behind "This product" on every Amazon card: isGenericStoreTitle
+// matched any title that merely STARTED with a store name, and Amazon's
+// og:title reads "Amazon.in: <real product title> : Electronics". So a perfectly
+// good name was discarded and the card fell back to the placeholder.
+const OG = 'Amazon.in: Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage) : Electronics';
+check('an og:title with a store prefix is NOT a store page', isGenericStoreTitle(OG) === false);
+check('the same title with the store name at the end is NOT a store page',
+  isGenericStoreTitle('Samsung Galaxy M17 5G Mobile : Amazon.in') === false);
+check('a bare store name IS a store page', isGenericStoreTitle('Amazon.in') === true);
+check('a store name with only "Electronics" after it IS a store page',
+  isGenericStoreTitle('Amazon.in: Electronics') === true);
+check('"Online Shopping" IS a store page', isGenericStoreTitle('Online Shopping') === true);
+check('a Flipkart store page IS a store page', isGenericStoreTitle('Flipkart') === true);
+// An Amazon-BRANDED product must not be mistaken for the store page.
+check('an Amazon-branded product is NOT a store page',
+  isGenericStoreTitle('Amazon Basics HDMI Cable') === false);
+check('...even with the og:title prefix',
+  isGenericStoreTitle('Amazon.in: Amazon Basics HDMI Cable : Electronics') === false);
+
+check('cleanProductName strips the store prefix and suffix',
+  cleanProductName(OG) === 'Samsung Galaxy M17 5G Mobile');
+check('cleanProductName keeps an Amazon-branded product name',
+  cleanProductName('Amazon.in: Amazon Basics HDMI Cable : Electronics') === 'Amazon Basics HDMI Cable');
+
+// --- a short-link slug must never become the name ----------------------------
+check('a short-link slug is rejected as a title', isPlaceholderTitle('016NErcW', 'B0G81TPT89') === true);
+check('...and displayTitle falls back rather than showing it',
+  displayTitle('016NErcW', 'B0G81TPT89') === 'This product');
+check('a real single-word name is still accepted',
+  isPlaceholderTitle('Airdopes', 'B0G81TPT89') === false);
+
+// --- displayTitle shows the og:title, which is the whole point ---------------
+check('displayTitle shows the real name from an og:title',
+  displayTitle(OG, 'B0G81TPT89') === 'Samsung Galaxy M17 5G Mobile');
+
+// --- the reader's price scan must be exchange-aware --------------------------
+// It had the same bug the scraper had: with no "price" keyword nearby it took
+// the FIRST rupee figure, which on a store page is often an exchange offer.
+const offerPage =
+  'Exchange offer: Up to ₹10,490 off on your old phone. ' +
+  'Current price ₹19,999.';
+check('the reader price scan skips an exchange figure', priceFromText(offerPage) === 19999);
+check('the reader price scan still finds a plain price', priceFromText('Price ₹1,499.50') === 1500);
+check('the reader price scan finds a labelled price', priceFromText('Deal price: ₹2,999') === 2999);
+
+// --- the metadata service's price is passed through, when it has one ---------
+{
+  const meta = fs.readFileSync(__dirname + '/lib/metadata.js', 'utf8');
+  check('fetchMetadata reads a price when the service publishes one', /data\.price/.test(meta));
+  check('fetchMetadata returns the price', /\n\s*price,/.test(meta));
+  check('a metadata price is used in the enrichment', /price recovered via metadata/.test(src));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

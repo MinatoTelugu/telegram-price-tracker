@@ -35,6 +35,14 @@ function grab(name) {
   return m[0];
 }
 
+// The error-page/placeholder guards need their constant sets too.
+const constSrc =
+  src.slice(src.indexOf('const PLACEHOLDER_SLUGS'), src.indexOf('const ERROR_PAGE_TITLES')) +
+  src.slice(src.indexOf('const ERROR_PAGE_TITLES'), src.indexOf('function isErrorPageTitle'));
+eval(constSrc.replace(/^const /gm, 'var '));
+eval(grab('isErrorPageTitle'));
+eval(grab('isPlaceholderTitle'));
+eval(grab('displayTitle'));
 eval(grab('looksLikeMarketingCopy'));
 eval(grab('betterTitle'));
 eval(grab('isGenericStoreTitle'));
@@ -178,6 +186,53 @@ check('an exchange-only string yields null, not a wrong number',
 check('a cashback clause is skipped', firstRealPrice('Cashback ₹2,000. ₹18,999 Lowest price for you') === 18999);
 check('a protection-fee clause is skipped', firstRealPrice('₹129 Protect Promise Fee. ₹19,999') === 19999);
 check('no price at all yields null', firstRealPrice('no prices here') === null);
+
+// --- an error page must never become the product name ------------------------
+// When a store refuses our host it answers with a 503 / robot-check page, and
+// that page's <title> was stored as the product name. A card read
+// "☀️ 503 - Service Unavailable Error".
+check('a 503 page title is rejected', isErrorPageTitle('503 - Service Unavailable Error') === true);
+check('a 403 page title is rejected', isErrorPageTitle('403 Forbidden') === true);
+check('an Access Denied page is rejected', isErrorPageTitle('Access Denied') === true);
+check('a robot check page is rejected', isErrorPageTitle('Robot Check') === true);
+check('a Cloudflare interstitial is rejected', isErrorPageTitle('Just a moment...') === true);
+check('a bare store domain is rejected', isErrorPageTitle('Amazon.in') === true);
+check('a real product name is NOT rejected', isErrorPageTitle('Samsung Galaxy M17 5G') === false);
+check('a name merely containing "error" is NOT rejected',
+  isErrorPageTitle('Error Correction Code Memory 16GB') === false);
+
+check('isPlaceholderTitle rejects an error page too',
+  isPlaceholderTitle('503 - Service Unavailable Error', 'B0G81TPT89') === true);
+
+// The card must not reprint a bad title that is ALREADY stored on a doc.
+check('displayTitle never shows an error page',
+  displayTitle('503 - Service Unavailable Error', 'B0G81TPT89') === 'This product');
+check('displayTitle falls back rather than showing an ASIN',
+  displayTitle('B0G81TPT89', 'B0G81TPT89') === 'This product');
+const marketingBlob =
+  'Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage) | 50MP OIS Triple Camera | ' +
+  'Super AMOLED Display | Gorilla Glass Victus | 6 Gen OS Upgrades | MONSTER CAMERA - Turn moments into monster stories';
+check('displayTitle cuts the marketing bullets off a good name',
+  displayTitle(marketingBlob, 'B0G81TPT89') === 'Samsung Galaxy M17 5G Mobile');
+check('displayTitle passes a clean name through',
+  displayTitle('Samsung Galaxy M17 5G', 'B0G81TPT89') === 'Samsung Galaxy M17 5G');
+
+// --- no message may go out with its HTML tags showing ------------------------
+// The photo-card upgrade spread the keyboard WITHOUT parse_mode, so the caption
+// rendered as literal <b>…</b> and <a href="…">…</a>.
+{
+  const kb = src.match(/function buildTrackKeyboard[\s\S]*?\n\}/)[0];
+  check('the keyboard carries parse_mode', /parse_mode:\s*'HTML'/.test(kb));
+  const photoUpgrade = src.slice(src.indexOf('upgraded the card to a photo card') - 900,
+                                src.indexOf('upgraded the card to a photo card'));
+  check('the photo-card caption sets parse_mode', /parse_mode:\s*'HTML'/.test(photoUpgrade));
+  const convertErr = src.slice(src.indexOf('CONVERT_ERRORS[result.reason]') - 200,
+                               src.indexOf('CONVERT_ERRORS[result.reason]') + 200);
+  check('the conversion-error reply sets parse_mode (its text has <b>)',
+    /parse_mode:\s*'HTML'/.test(convertErr));
+  check('the conversion-error strings really do contain markup',
+    /unsupported_store:[\s\S]{0,120}<b>/.test(src));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

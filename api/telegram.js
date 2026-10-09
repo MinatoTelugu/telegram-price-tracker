@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-74 (2026-10-09)';
+const BUILD = 'names-75 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -132,6 +132,36 @@ const PLACEHOLDER_SLUGS = new Set([
   'product', 'products', 'item', 'items', 'dl', 'p', 'dp', 'd', 'gp', 'buy', 'shop', 'store', 'detail', 'details',
 ]);
 
+/**
+ * Titles that belong to an ERROR PAGE, not a product. When a store refuses our
+ * host it answers with a 503 / robot-check page, and that page's <title> was
+ * being stored as the product name — a card read
+ * "☀️ 503 - Service Unavailable Error". These are matched as the WHOLE title
+ * (or a prefix of it), never as a substring, so a real product whose name
+ * happens to contain one of these words is unaffected.
+ */
+const ERROR_PAGE_TITLES = [
+  /^\s*\d{3}\b/,                       // "503 - Service Unavailable", "403 Forbidden"
+  /^\s*service unavailable\b/i,
+  /^\s*access denied\b/i,
+  /^\s*robot check\b/i,
+  /^\s*are you a robot\b/i,
+  /^\s*just a moment\b/i,               // Cloudflare interstitial
+  /^\s*attention required\b/i,
+  /^\s*verify(ing)? (you|your)/i,
+  /^\s*(captcha|checking your browser)\b/i,
+  /^\s*(error|not found|page not found|404|bad gateway|gateway timeout)\s*$/i,
+  /^\s*amazon\.(in|com)\s*$/i,
+  /^\s*flipkart\.com\s*$/i,
+];
+
+/** True when a scraped title is really an error/robot-check page heading. */
+function isErrorPageTitle(title) {
+  const t = String(title || '').trim();
+  if (!t) return false;
+  return ERROR_PAGE_TITLES.some((re) => re.test(t));
+}
+
 function isPlaceholderSlug(slug) {
   const s = String(slug || '').toLowerCase();
   return !s || PLACEHOLDER_SLUGS.has(s) || s.length < 4;
@@ -145,6 +175,7 @@ function isPlaceholderSlug(slug) {
 function isPlaceholderTitle(title, productId) {
   const s = String(title || '').trim();
   if (!s) return true;
+  if (isErrorPageTitle(s)) return true;
   if (productId && s.toLowerCase() === String(productId).toLowerCase()) return true;
   if (PLACEHOLDER_SLUGS.has(s.toLowerCase())) return true;
   if (s.length < 4) return true;
@@ -526,7 +557,7 @@ async function trackProduct(result, from, info) {
 
   if (result.resolvedUrl) data.resolvedUrl = result.resolvedUrl;
   if (extra.resolvedUrl) data.resolvedUrl = extra.resolvedUrl;
-  if (extra.title) data.title = extra.title;
+  if (extra.title) data.title = cleanProductName(extra.title) || extra.title;
   if (extra.imageUrl) data.imageUrl = extra.imageUrl;
   if (extra.price != null) {
     data.lastPrice = extra.price;
@@ -614,7 +645,10 @@ function buildTrackKeyboard(docId, result) {
   row2.push(Markup.button.url("🛍️ Today's Deals", CHANNEL_URL));
 
   const rows = [row1, row2];
-  return Markup.inlineKeyboard(rows);
+  // parse_mode travels WITH the keyboard: callers spread this object straight
+  // into send options, and one of them (the photo-card upgrade) spread it alone
+  // — so its caption went out with the tags showing as literal text.
+  return Object.assign({ parse_mode: 'HTML' }, Markup.inlineKeyboard(rows));
 }
 
 /**
@@ -821,7 +855,10 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
           await ctx.telegram.sendPhoto(
             ctx.chat.id,
             info.imageUrl,
-            Object.assign({ caption: formatTrackingConfirmation(result, info, null) }, keyboard)
+            Object.assign(
+              { caption: formatTrackingConfirmation(result, info, null), parse_mode: 'HTML' },
+              keyboard
+            )
           );
           await ctx.telegram.deleteMessage(ctx.chat.id, sentMessage.message_id).catch(() => {});
           console.log('track: upgraded the card to a photo card for ' + result.productId);
@@ -1022,6 +1059,19 @@ function formatStamp(date) {
   );
 }
 
+/**
+ * The name to SHOW on a card. Never an error page ("503 - Service Unavailable
+ * Error") and never a bare product id if anything better exists — a product doc
+ * may still carry a bad title written before the guard below existed.
+ */
+function displayTitle(title, productId) {
+  const cleaned = cleanProductName(title);
+  if (cleaned && !isPlaceholderTitle(cleaned, productId) && !isErrorPageTitle(cleaned)) {
+    return cleaned;
+  }
+  return 'This product';
+}
+
 /** The "link sent" confirmation, matching the reference layout. */
 function formatTrackingConfirmation(result, info, openUrl) {
   const market = result.marketplace === 'amazon' ? 'Amazon' : 'Flipkart';
@@ -1031,7 +1081,9 @@ function formatTrackingConfirmation(result, info, openUrl) {
   const lines = [
     '<b>The Product has Started Tracking!</b>',
     '',
-    '☀️ <b>' + escapeHtml(cleanProductName(info.title) || info.title || result.productId) + '</b>',
+    '☀️ <b>' +
+      escapeHtml(displayTitle(info.title, result.productId)) +
+      '</b>',
   ];
   if (info.inStock === false) {
     lines.push('', '😔 <b>Currently Out of Stock</b>');
@@ -1867,7 +1919,9 @@ function registerHandlers(bot) {
       const result = await convertAffiliateLink(url);
 
       if (!result.ok) {
-        await ctx.reply('⚠️ ' + (CONVERT_ERRORS[result.reason] || 'Could not convert that link.'));
+        await ctx.reply('⚠️ ' + (CONVERT_ERRORS[result.reason] || 'Could not convert that link.'), {
+          parse_mode: 'HTML',
+        });
         return;
       }
 
@@ -2267,6 +2321,8 @@ module.exports._internals = {
   extractUrl,
   titleFromUrl,
   isPlaceholderTitle,
+  isErrorPageTitle,
+  displayTitle,
   webAppBase,
   upsertUser,
   trackProduct,

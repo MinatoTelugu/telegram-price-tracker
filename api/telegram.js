@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-66 (2026-10-09)';
+const BUILD = 'names-67 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -851,6 +851,46 @@ function isGenericStoreTitle(title) {
   );
 }
 
+/**
+ * Turn a raw page title into the CLEAN product name.
+ *
+ * Stores tack on everything: Amazon appends "| 50MP OIS Triple Camera | Super
+ * AMOLED Display | ...", Flipkart appends "Online at Best Price On Flipkart.com",
+ * and both bury the colour / RAM / storage in brackets. The user wants the
+ * product's actual name — "Samsung Galaxy M17 5G" — not that pile.
+ *
+ *   1. keep only the part before the first "|" (Amazon's spec spam)
+ *   2. drop store boilerplate suffixes (" - Buy ... Online", ": Amazon.in")
+ *   3. drop bracketed variant details (colour, RAM, storage)
+ *   4. collapse whitespace
+ */
+function cleanProductName(title) {
+  let t = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+
+  t = t.split(/\s*\|\s*/)[0];
+
+  t = t.replace(/\s*[:\-–]\s*(buy\b|amazon\.in|flipkart\.com|online at best price|price in india).*$/i, '');
+  t = t.replace(/\s+(online at best price|price in india|buy online|free shipping|at best price).*$/i, '');
+
+  // Bracketed variants — only when they actually contain a variant/spec word, so
+  // a genuine parenthetical in the name is not destroyed.
+  t = t.replace(
+    /\s*\((?:[^()]*(?:\d+\s*(?:gb|tb)|ram|rom|colour|color|silver|black|blue|grey|gray|white|gold|green|purple|pink|titanium)[^()]*)\)/gi,
+    ''
+  );
+
+  // A trailing colour / size run without brackets, e.g.
+  // "Samsung Galaxy M17 5G Moonlight Silver 128 GB" -> "Samsung Galaxy M17 5G".
+  t = t.replace(
+    /\s+(?:[A-Za-z]+\s+)*(?:silver|black|blue|grey|gray|white|gold|green|purple|pink|titanium|midnight|graphite|starlight)\b(?:\s+\d+\s*(?:gb|tb))?\s*$/i,
+    ''
+  );
+
+  t = t.replace(/\s+/g, ' ').trim();
+  return t || null;
+}
+
 /** Firestore Timestamp | Date | seconds -> Date (or null). */
 function tsToDate(ts) {
   try {
@@ -908,7 +948,7 @@ function formatTrackingConfirmation(result, info, openUrl) {
   const lines = [
     '<b>The Product has Started Tracking!</b>',
     '',
-    '☀️ <b>' + escapeHtml(info.title || result.productId) + '</b>',
+    '☀️ <b>' + escapeHtml(cleanProductName(info.title) || info.title || result.productId) + '</b>',
   ];
   if (info.inStock === false) {
     lines.push('', '😔 <b>Currently Out of Stock</b>');
@@ -2055,6 +2095,7 @@ module.exports = async (req, res) => {
 // Exposed for unit tests.
 module.exports._internals = {
   betterTitle,
+  cleanProductName,
   looksLikeMarketingCopy,
   isGenericStoreTitle,
   escapeHtml,

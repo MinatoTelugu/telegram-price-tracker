@@ -38,6 +38,7 @@ function grab(name) {
 eval(grab('looksLikeMarketingCopy'));
 eval(grab('betterTitle'));
 eval(grab('isGenericStoreTitle'));
+eval(grab('cleanProductName'));
 
 // --- marketing copy vs a real product name -----------------------------------
 check(
@@ -108,6 +109,36 @@ check('a store title alone yields null, not a wrong name',
   betterTitle('Amazon.in', null) === null);
 check('a store title never beats a real scraped name',
   betterTitle('Samsung Galaxy M17 5G Mobile', 'Amazon.in') === 'Samsung Galaxy M17 5G Mobile');
+
+// --- the CLEAN product name --------------------------------------------------
+// Stores bury the name in spec spam, boilerplate and bracketed variants. The
+// card must show the product's actual name.
+check(
+  'Amazon spec spam after a pipe is dropped',
+  cleanProductName('Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage) | 50MP OIS Triple Camera | Super AMOLED Display') ===
+    'Samsung Galaxy M17 5G Mobile'
+);
+check(
+  'Flipkart boilerplate is dropped',
+  cleanProductName('Samsung Galaxy M17 5G (128 GB Storage, 4 GB RAM) Online at Best Price On Flipkart.com') ===
+    'Samsung Galaxy M17 5G'
+);
+check(
+  'a trailing colour and size is dropped',
+  cleanProductName('Samsung Galaxy M17 5G Moonlight Silver 128 GB') === 'Samsung Galaxy M17 5G'
+);
+check(
+  'bracketed variant details are dropped',
+  cleanProductName('Samsung Galaxy S24 Ultra (Titanium Grey, 12GB RAM, 256GB Storage)') ===
+    'Samsung Galaxy S24 Ultra'
+);
+check('a trailing colour is dropped', cleanProductName('Apple iPhone 15 Blue') === 'Apple iPhone 15');
+check(
+  'a name with no variant is left alone',
+  cleanProductName('Boat Rockerz 255 Pro+') === 'Boat Rockerz 255 Pro+'
+);
+check('an empty title yields null', cleanProductName('') === null);
+check('a null title yields null', cleanProductName(null) === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-65 (2026-10-09)';
+const BUILD = 'names-66 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -677,7 +677,9 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     };
 
     const [scraped, viaConverter] = await Promise.all([
-      withTimeout(fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace), 2500).catch(() => null),
+      // Generous on purpose: this runs AFTER the reply, so a longer budget costs
+      // the user nothing and is what lets the card gain its price.
+      withTimeout(fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace), 7000).catch(() => null),
       result.affiliateUrl && result.affiliateUrl !== result.cleanUrl
         ? withTimeout(resolveShortUrl(result.affiliateUrl), 4000).catch(() => null)
         : Promise.resolve(null),
@@ -721,6 +723,12 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
     // metadata service, which fetches the page from its own servers.
     if (isPlaceholderTitle(info.title, result.productId) || looksLikeMarketingCopy(info.title)) {
       const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
+      console.log(
+        'track: metadata fallback -> ' +
+          (meta
+            ? 'title="' + String(meta.title || '').slice(0, 60) + '" image=' + (meta.image ? 'yes' : 'no')
+            : 'no response')
+      );
       if (meta) {
         const named = betterTitle(
           isGenericStoreTitle(meta.title) ? null : meta.title,
@@ -1616,7 +1624,7 @@ function registerHandlers(bot) {
         try {
           early = await withTimeout(
             fetchProduct(instantResult.affiliateUrl || instantResult.cleanUrl, quick.marketplace),
-            1800
+            2500
           );
         } catch (err) {
           /* no early data — the background pass will handle it */

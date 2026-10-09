@@ -54,12 +54,18 @@ check('a startup run is still queued', src.includes('setTimeout(') && src.includ
 // without reply_markup. That is why Amazon cards (whose background enrichment
 // always ran) lost their buttons while Flipkart's kept theirs.
 const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
-const editCall = tg.slice(tg.indexOf('editMessageText(ctx.chat.id, sentMessage.message_id'));
-check('the enrichment edits the card', editCall.length > 0);
+// Look at the whole enrichment function, so the check survives the calls being
+// reformatted across lines.
+const enrichStart = tg.indexOf('async function enrichTracked');
+const enrich = tg.slice(enrichStart, tg.indexOf('\n}', enrichStart));
+check('the enrichment edits the card',
+  enrich.includes('editMessageText') || enrich.includes('editMessageCaption'));
 check(
   'and passes reply_markup, so the buttons survive the edit',
-  editCall.slice(0, 600).includes('reply_markup')
+  enrich.includes('reply_markup: keyboard.reply_markup')
 );
+check('a photo card is edited through its caption, which is the only way that works',
+  enrich.includes('editMessageCaption'));
 check('a photo card upgrade exists for cards that gain an image', tg.includes('upgraded the card to a photo card'));
 
 // --- an out-of-stock product must never produce a price alert ----------------

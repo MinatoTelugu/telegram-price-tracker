@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-76 (2026-10-09)';
+const BUILD = 'names-77 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -868,18 +868,29 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from) {
         }
       }
 
-      if (ctx.telegram.editMessageText) {
-        const text = formatTrackingConfirmation(result, info, null);
+      const text = formatTrackingConfirmation(result, info, null);
+      // CRITICAL: reply_markup must be passed, or Telegram REMOVES the inline
+      // keyboard — which is exactly why Amazon cards, whose enrichment always
+      // ran, lost their buttons while Flipkart's kept them.
+      const editOptions = {
+        parse_mode: 'HTML',
+        reply_markup: keyboard.reply_markup,
+      };
+      if (sentMessage.photo && ctx.telegram.editMessageCaption) {
+        // A photo card cannot be edited as text, so its CAPTION is rewritten.
         await ctx.telegram
-          .editMessageText(ctx.chat.id, sentMessage.message_id, undefined, text, {
-            parse_mode: 'HTML',
-            link_preview_options: { is_disabled: true },
-            // CRITICAL: omitting reply_markup here makes Telegram REMOVE the
-            // inline keyboard — which is exactly why Amazon cards, whose
-            // enrichment always ran, lost their buttons while Flipkart's kept
-            // them.
-            reply_markup: keyboard.reply_markup,
-          })
+          .editMessageCaption(ctx.chat.id, sentMessage.message_id, undefined, text, editOptions)
+          .catch(() => {});
+        console.log('track: enriched photo caption for ' + result.productId);
+      } else if (ctx.telegram.editMessageText) {
+        await ctx.telegram
+          .editMessageText(
+            ctx.chat.id,
+            sentMessage.message_id,
+            undefined,
+            text,
+            Object.assign({ link_preview_options: { is_disabled: true } }, editOptions)
+          )
           .catch(() => {});
         console.log('track: enriched message for ' + result.productId);
       }
@@ -1070,6 +1081,67 @@ function displayTitle(title, productId) {
     return cleaned;
   }
   return 'This product';
+}
+
+/**
+ * Shown the instant a link arrives, before ANY network work.
+ *
+ * The fallback chain (expander -> direct fetch -> retries -> reader -> hosted
+ * API) can take 40-60 seconds. Without this the chat simply sat silent, and
+ * users assumed the bot was dead and left. It is replaced by the real card as
+ * soon as one is ready.
+ */
+const PROCESSING_TEXT =
+  '⏳ <b>Processing your link…</b>\nFetching product details, please wait.';
+
+/** The same reassurance for a store we can convert but not track. */
+const PROCESSING_CONVERT_TEXT =
+  '⏳ <b>Processing your link…</b>\nCreating your affiliate link, please wait.';
+
+/**
+ * Telegram's "typing" indicator lapses after about five seconds, which is
+ * useless for a wait this long. This re-sends it until stopped, so the chat
+ * shows activity for the whole fetch. Always stopped in a finally block.
+ */
+function keepTyping(ctx) {
+  const send = () => {
+    try {
+      if (typeof ctx.sendChatAction === 'function') ctx.sendChatAction('typing').catch(() => {});
+    } catch (err) {
+      /* not fatal */
+    }
+  };
+  send();
+  const timer = setInterval(send, 4000);
+  if (timer.unref) timer.unref();
+  return () => {
+    clearInterval(timer);
+  };
+}
+
+/**
+ * Replace the "processing" placeholder with the finished card.
+ *
+ * Falls back to deleting the placeholder and sending a fresh message, because
+ * an edit can legitimately fail — Telegram rejects an edit whose text is
+ * unchanged, for one.
+ */
+async function finishPlaceholder(ctx, placeholder, text, extra) {
+  const id = placeholder && placeholder.message_id;
+  if (id && ctx.chat && ctx.telegram && ctx.telegram.editMessageText) {
+    try {
+      await ctx.telegram.editMessageText(ctx.chat.id, id, undefined, text, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        // Passed explicitly, or Telegram REMOVES the keyboard.
+        reply_markup: extra && extra.reply_markup,
+      });
+      return placeholder;
+    } catch (err) {
+      await ctx.telegram.deleteMessage(ctx.chat.id, id).catch(() => {});
+    }
+  }
+  return ctx.reply(text, extra);
 }
 
 /** The "link sent" confirmation, matching the reference layout. */
@@ -1817,6 +1889,8 @@ function registerHandlers(bot) {
   });
 
   bot.on('text', async (ctx) => {
+    let stopTyping = null;
+    let placeholder = null;
     try {
       if (!ctx.from) return;
       const text = ctx.message.text || '';
@@ -1829,6 +1903,22 @@ function registerHandlers(bot) {
             'Example: https://www.amazon.in/dp/B08N5WRWNW'
         );
         return;
+      }
+
+      // IMMEDIATE ACKNOWLEDGEMENT — before any network call at all.
+      // Everything below can take up to a minute, so the user must hear
+      // something first. This message is edited into the real card.
+      stopTyping = keepTyping(ctx);
+      try {
+        placeholder = await ctx.reply(PROCESSING_TEXT, {
+          parse_mode: 'HTML',
+          link_preview_options: { is_disabled: true },
+          ...(ctx.message && ctx.message.message_id
+            ? { reply_parameters: { message_id: ctx.message.message_id } }
+            : {}),
+        });
+      } catch (err) {
+        console.warn('processing placeholder failed:', err.message);
       }
 
       // UNIVERSAL SHORT-LINK EXPANSION — before anything else.
@@ -1846,12 +1936,6 @@ function registerHandlers(bot) {
         }
       }
 
-      // Feedback without clutter: a typing indicator, not a chat message.
-      try {
-        if (typeof ctx.sendChatAction === 'function') await ctx.sendChatAction('typing');
-      } catch (err) {
-        /* not fatal */
-      }
       // ---- FAST PATH ---------------------------------------------------------
       // When the URL already carries the product id, we can start tracking with
       // NO network call at all. Reply instantly, save immediately, then enrich
@@ -1903,7 +1987,12 @@ function registerHandlers(bot) {
         if (ctx.message && ctx.message.message_id) {
           extra.reply_parameters = { message_id: ctx.message.message_id };
         }
-        const sent = await ctx.reply(formatTrackingConfirmation(instantResult, instantInfo, null), extra);
+        const sent = await finishPlaceholder(
+          ctx,
+          placeholder,
+          formatTrackingConfirmation(instantResult, instantInfo, null),
+          extra
+        );
         console.log(
           'track: replied in ' + (Date.now() - t0) + 'ms (early price=' +
             (instantInfo.price != null ? instantInfo.price : 'none') + ')'
@@ -1919,9 +2008,12 @@ function registerHandlers(bot) {
       const result = await convertAffiliateLink(url);
 
       if (!result.ok) {
-        await ctx.reply('⚠️ ' + (CONVERT_ERRORS[result.reason] || 'Could not convert that link.'), {
-          parse_mode: 'HTML',
-        });
+        await finishPlaceholder(
+          ctx,
+          placeholder,
+          '⚠️ ' + (CONVERT_ERRORS[result.reason] || 'Could not convert that link.'),
+          { parse_mode: 'HTML' }
+        );
         return;
       }
 
@@ -1929,12 +2021,14 @@ function registerHandlers(bot) {
       // NOTHING else — no header, no store label, no meta text. Sent as plain
       // text (no parse_mode) so a URL containing & or ? is never mis-parsed.
       if (result.marketplace === 'other') {
-        await ctx.reply(result.affiliateUrl);
+        // Plain text, no parse_mode, so a URL containing & or ? is never
+        // mis-parsed as HTML.
+        await finishPlaceholder(ctx, placeholder, result.affiliateUrl, {});
         return;
       }
 
       if (!db) {
-        await ctx.reply(DB_DOWN);
+        await finishPlaceholder(ctx, placeholder, DB_DOWN, {});
         return;
       }
 
@@ -2030,16 +2124,27 @@ function registerHandlers(bot) {
       if (ctx.message && ctx.message.message_id) {
         extra.reply_parameters = { message_id: ctx.message.message_id };
       }
-      let sent = false;
       if (info.imageUrl && typeof ctx.replyWithPhoto === 'function') {
         try {
+          // A photo cannot be an edit of a text message, so the placeholder is
+          // removed and the photo card takes its place.
+          if (placeholder && placeholder.message_id && ctx.telegram) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id).catch(() => {});
+            placeholder = null;
+          }
           await withTimeout(ctx.replyWithPhoto(info.imageUrl, { caption: replyText, ...extra }), 7000);
-          sent = true;
         } catch (err) {
           console.warn('product photo failed, falling back to text:', err.message);
+          await finishPlaceholder(ctx, placeholder, replyText, extra);
         }
+      } else {
+        const sentSlow = await finishPlaceholder(ctx, placeholder, replyText, extra);
+        // Fill the card in afterwards, exactly as the fast path does — the
+        // first fetch is bounded at 2.5s, so the price is often still missing.
+        enrichTracked(ctx, sentSlow, url, ctx.from).catch((err) =>
+          console.warn('enrich failed:', err.message)
+        );
       }
-      if (!sent) await ctx.reply(replyText, extra);
     } catch (err) {
       console.error('text handler failed', err);
       // Turn the raw Firestore error into something actionable for the user.
@@ -2053,10 +2158,12 @@ function registerHandlers(bot) {
         hint = '⚠️ My database credentials were rejected. Please try again later.';
       }
       try {
-        await ctx.reply(hint);
+        await finishPlaceholder(ctx, placeholder, hint, {});
       } catch (_) {
         /* reply already failed; nothing else to do */
       }
+    } finally {
+      if (stopTyping) stopTyping();
     }
   });
 

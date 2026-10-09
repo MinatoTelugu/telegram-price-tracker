@@ -235,6 +235,34 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the last-resort price is checked too', /priceLooksImplausible\(last\.price, mrp\)/.test(scr));
 }
 
+// --- the reader must be given enough time ------------------------------------
+// The log is full of "reader fallback failed: timeout of 8000ms exceeded" for
+// Amazon. That is a TIMEOUT, not a block — the route works, it just needs longer.
+// The reader renders the page on its own servers, so it is slow by nature.
+{
+  const { parseReaderBody } = require('./lib/reader');
+  const body = 'Title: Samsung Galaxy M17 5G Mobile\n\nURL Source: https://www.amazon.in/dp/B0G81TPT89\n\nCurrent price ₹19,999\nExchange offer: Up to ₹10,490 off';
+  const parsed = parseReaderBody(body);
+  check('the reader parses the title', parsed.title === 'Samsung Galaxy M17 5G Mobile');
+  check('the reader rejects a URL echoed as the title',
+    parseReaderBody('Title: https://www.amazon.in/dp/X\n# Real Name') !== null);
+  check('...and falls back to the markdown heading',
+    parseReaderBody('Title: https://www.amazon.in/dp/X\n\n# Real Product Name').title === 'Real Product Name');
+  check('an empty page yields no title', parseReaderBody('nothing here at all').title === null);
+
+  const reader = fs.readFileSync(__dirname + '/lib/reader.js', 'utf8');
+  check('the default reader timeout is no longer 8s', !/READER_TIMEOUT_MS \|\| '8000'/.test(reader));
+  check('the reader accepts a per-call timeout', /options\.timeoutMs \|\| TIMEOUT/.test(reader));
+  check('the reader can retry', /attempts/.test(reader));
+
+  const src = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('the background enrichment asks for a long reader budget',
+    /timeoutMs: 25000/.test(src));
+  check('...and retries', /attempts: 2/.test(src));
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the scraper last-resort path does too', /timeoutMs: 20000/.test(scr));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

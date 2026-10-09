@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-85 (2026-10-09)';
+const BUILD = 'names-86 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -780,7 +780,14 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     // host, so this is the route that can actually see the product page — and
     // its text gives us both the name and a price.
     if (!isUsableTitle(info.title, result.productId) || info.price == null) {
-      const page = await fetchReadablePage(result.cleanUrl || result.affiliateUrl).catch(() => null);
+      // This runs AFTER the user has been answered, so latency costs nothing and
+      // a long budget is free. The reader renders the page on its own servers —
+      // Amazon especially — and at the old 8s default it was timing out on every
+      // attempt, which is why the price never arrived for Amazon links.
+      const page = await fetchReadablePage(result.cleanUrl || result.affiliateUrl, {
+        timeoutMs: 25000,
+        attempts: 2,
+      }).catch(() => null);
       if (page) {
         if (page.title) {
           const named = betterTitle(

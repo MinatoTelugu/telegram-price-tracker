@@ -309,7 +309,14 @@ async function startPolling() {
 
 // ---- start ----------------------------------------------------------------
 (async () => {
-  await startPolling();
+  // IMPORTANT: do NOT await startPolling() here.
+  //
+  // Telegraf's bot.launch() resolves only when polling STOPS, so awaiting it on
+  // a HEALTHY start means everything below — the schedulers and the first run —
+  // is never reached. That silently disabled the in-process price checks (the
+  // "Scheduled:" line was missing from the startup log, which is how this was
+  // spotted). startPolling retries internally, so it needs no await.
+  startPolling().catch((err) => console.error('polling failed:', err.message));
 
   const priceCron = process.env.PRICE_CRON || '*/30 * * * *';
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';

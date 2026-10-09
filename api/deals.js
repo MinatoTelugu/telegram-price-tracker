@@ -141,7 +141,9 @@ async function recentGenderCounts(limit = 12) {
     let men = 0;
     let women = 0;
     for (const d of snap.docs) {
-      const g = (d.data() || {}).gender;
+      const row = d.data() || {};
+      if (row.isFingerprint) continue; // dedup markers are not posts
+      const g = row.gender;
       if (g === 'men') men++;
       else if (g === 'women') women++;
     }
@@ -226,13 +228,14 @@ async function alreadyPosted(id) {
   }
 }
 
-async function markPosted(id, deal) {
+async function markPosted(id, deal, isFingerprint) {
   if (!db) return;
   try {
     await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).set(
       {
         title: deal.title,
         gender: classifyGender(deal.title),
+        isFingerprint: Boolean(isFingerprint),
         url: deal.url,
         price: deal.price,
         mrp: deal.mrp,
@@ -500,7 +503,7 @@ module.exports = async (req, res) => {
         // Record the title fingerprint as well, so a re-listed duplicate is
         // caught even though its id differs.
         const fpKey = titleFingerprint(deal.title);
-        if (fpKey) await markPosted(fpKey, deal);
+        if (fpKey) await markPosted(fpKey, deal, true);
         posted.push({ id: deal.id, title: deal.title, discount: deal.discount, link: shortLink });
         console.log('deals: posted ok — total so far ' + posted.length);
       } catch (err) {

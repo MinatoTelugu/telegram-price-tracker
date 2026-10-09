@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-56 (2026-10-09)';
+const BUILD = 'names-57 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1504,6 +1504,7 @@ function registerHandlers(bot) {
       // minute-long wait.
       const quick = quickClassify(url);
       if (quick && db) {
+        const t0 = Date.now();
         await upsertUser(ctx.from).catch(() => {});
         const instantResult = {
           ok: true,
@@ -1548,6 +1549,10 @@ function registerHandlers(bot) {
           extra.reply_parameters = { message_id: ctx.message.message_id };
         }
         const sent = await ctx.reply(formatTrackingConfirmation(instantResult, instantInfo, null), extra);
+        console.log(
+          'track: replied in ' + (Date.now() - t0) + 'ms (early price=' +
+            (instantInfo.price != null ? instantInfo.price : 'none') + ')'
+        );
 
         // Enrich AFTER replying — never before.
         enrichTracked(ctx, sent, url, ctx.from).catch((err) =>

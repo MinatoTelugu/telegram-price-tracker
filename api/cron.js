@@ -73,9 +73,19 @@ function alertKeyboard(docId, product) {
   return { inline_keyboard: [row1, row2] };
 }
 
-async function sendTelegramMessage(chatId, text, replyMarkup) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Send one alert. Retries transient failures so a single blip — a network
+ * hiccup, or Telegram's 429 rate limit when many subscribers are alerted at
+ * once — never costs a user their notification. On 429 we honour the
+ * `retry_after` Telegram asks for.
+ */
+async function sendTelegramMessage(chatId, text, replyMarkup, attempt) {
   const token = process.env.BOT_TOKEN;
   if (!token) return false;
+  const tries = attempt || 1;
+
   try {
     await axios.post(
       'https://api.telegram.org/bot' + token + '/sendMessage',
@@ -90,7 +100,19 @@ async function sendTelegramMessage(chatId, text, replyMarkup) {
     );
     return true;
   } catch (err) {
-    console.error('sendMessage failed for', chatId, err.message);
+    const status = err.response && err.response.status;
+    const params = err.response && err.response.data && err.response.data.parameters;
+    const retryAfter = params && params.retry_after;
+    // 429 and 5xx are worth another go; a 400/403 (blocked, bad chat) is not.
+    const transient = !status || status === 429 || status >= 500;
+
+    if (transient && tries < 3) {
+      const wait = retryAfter ? Number(retryAfter) * 1000 : tries === 1 ? 600 : 1600;
+      console.warn('alert send retry ' + tries + ' for ' + chatId + ' in ' + wait + 'ms (' + err.message + ')');
+      await sleep(wait);
+      return sendTelegramMessage(chatId, text, replyMarkup, tries + 1);
+    }
+    console.error('ALERT LOST for ' + chatId + ' after ' + tries + ' attempt(s): ' + err.message);
     return false;
   }
 }
@@ -380,9 +402,20 @@ async function processProduct(doc) {
   }
 
   if (message) {
+    let first = true;
     for (const chatId of subscribers) {
+      // A small gap between recipients keeps us clear of Telegram's per-second
+      // limit when a popular product is tracked by many users.
+      if (!first) await sleep(60);
+      first = false;
       const sent = await sendTelegramMessage(chatId, message, alertKeyboard(doc.id, data));
       if (sent) alerted++;
+    }
+    if (alerted < subscribers.length) {
+      console.warn(
+        'cron: ' + doc.id + ' — ' + (subscribers.length - alerted) + ' of ' +
+          subscribers.length + ' alert(s) could not be delivered'
+      );
     }
   }
 

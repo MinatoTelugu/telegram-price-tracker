@@ -24,17 +24,30 @@ const origLoad = Module._load;
 // The metadata route is reached through axios.get; return a resolved final URL
 // so we can prove the expander uses it when our own hops fail.
 const CANONICAL = 'https://www.flipkart.com/ai-plus-pulse-2-blue-64-gb/p/itm9168504534079';
+let metadataWorks = true; // flip to false to exercise the search route
+const SEARCH_RESULT = 'https://www.flipkart.com/realme-p4-5g-steel-grey-128-gb/p/itmrealme1';
 Module._load = function (request) {
   if (request === 'axios') {
     return {
       get: async (url) => {
         if (String(url).includes('microlink') || String(url).includes('metadata')) {
-          return { status: 200, data: { data: { url: CANONICAL, title: 'AI+ Pulse 2 Blue 64 GB' } } };
+          return {
+            status: 200,
+            data: { data: metadataWorks ? { url: CANONICAL, title: 'AI+ Pulse 2 Blue 64 GB' } : {} },
+          };
         }
         // our own hops: pretend the host refuses us
         return { status: 200, data: '', headers: {} };
       },
-      post: async () => ({ data: {} }),
+      post: async (url) => {
+        if (String(url).includes('langsearch')) {
+          return {
+            status: 200,
+            data: { code: 200, data: { webPages: { value: [{ name: 'realme P4 5G', url: SEARCH_RESULT, snippet: 'realme P4 5G' }] } } },
+          };
+        }
+        return { data: {} };
+      },
     };
   }
   return origLoad.apply(this, arguments);
@@ -109,6 +122,20 @@ check('a canonical flipkart url is NOT a short link', shortlink.isShortLink('htt
   check('a dl.flipkart.com link expands to the canonical product url', expanded === CANONICAL);
   check('the expanded url is a canonical flipkart product page', String(expanded).includes('/p/itm'));
   check('the expanded url is no longer a short link', shortlink.isShortLink(String(expanded)) === false);
+
+  // Resilience: if the metadata service gives us nothing, the search API is a
+  // second independent route to the canonical url.
+  metadataWorks = false;
+  process.env.LANGSEARCH_API_KEY = 'ls_test';
+  const viaSearch = await shortlink.expandShortLink('https://dl.flipkart.com/s/kKLBCCuuuN');
+  check('the search route expands when metadata fails', viaSearch === SEARCH_RESULT);
+  delete process.env.LANGSEARCH_API_KEY;
+
+  // With no route available at all it must report failure, not a wrong url.
+  metadataWorks = false;
+  const none = await shortlink.expandShortLink('https://dl.flipkart.com/s/kKLBCCuuuN');
+  check('with every route unavailable it returns null (never a wrong url)', none === null);
+  metadataWorks = true;
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

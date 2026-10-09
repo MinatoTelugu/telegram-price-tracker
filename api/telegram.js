@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-80 (2026-10-09)';
+const BUILD = 'names-81 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -68,13 +68,15 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || {
 
 const { cleanHistory } = require('../lib/cleanHistory');
 const {
+  PLACEHOLDER_SLUGS,
+  ERROR_PAGE_TITLES,
+  STORE_NAMES,
+  GENERIC_STORE_WORDS,
   isErrorPageTitle,
   isPlaceholderTitle,
   isGenericStoreTitle,
   looksLikeMarketingCopy,
   isUsableTitle,
-  STORE_NAMES,
-  GENERIC_STORE_WORDS,
 } = require('../lib/titles');
 
 const MARKETPLACE_LABEL = { amazon: '🛒 Amazon', flipkart: '🛍️ Flipkart' };

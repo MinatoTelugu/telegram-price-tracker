@@ -21,12 +21,29 @@ function check(name, ok) {
 
 // Stub axios so requiring lib/affiliate does not touch the network.
 const origLoad = Module._load;
+// The metadata route is reached through axios.get; return a resolved final URL
+// so we can prove the expander uses it when our own hops fail.
+const CANONICAL = 'https://www.flipkart.com/ai-plus-pulse-2-blue-64-gb/p/itm9168504534079';
 Module._load = function (request) {
-  if (request === 'axios') return { get: async () => ({ status: 200, data: '', headers: {} }), post: async () => ({ data: {} }) };
+  if (request === 'axios') {
+    return {
+      get: async (url) => {
+        if (String(url).includes('microlink') || String(url).includes('metadata')) {
+          return { status: 200, data: { data: { url: CANONICAL, title: 'AI+ Pulse 2 Blue 64 GB' } } };
+        }
+        // our own hops: pretend the host refuses us
+        return { status: 200, data: '', headers: {} };
+      },
+      post: async () => ({ data: {} }),
+    };
+  }
   return origLoad.apply(this, arguments);
 };
 const affiliate = require('./lib/affiliate.js');
-Module._load = origLoad;
+// NOTE: the axios stub stays installed for the whole file. Restoring it here
+// would make the lazily-required metadata module use the REAL axios, and those
+// calls would fail — the resolver's third route would then look broken when it
+// is not.
 
 const base = 'https://amzn.in/d/016NErcW';
 const target = 'https://www.amazon.in/Samsung-Galaxy-M17-5G/dp/B0G81TPT89';
@@ -72,5 +89,27 @@ check(
 check('amzn.to is classified as Amazon', affiliate.detectMarketplace('amzn.to') === 'amazon');
 check('a.co is classified as Amazon', affiliate.detectMarketplace('a.co') === 'amazon');
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail ? 1 : 0);
+// --- universal resolver -------------------------------------------------------
+const shortlink = require('./lib/shortlink.js');
+
+check('amzn.in/d is a short link', shortlink.isShortLink('https://amzn.in/d/016NErcW') === true);
+check('amzn.to is a short link', shortlink.isShortLink('https://amzn.to/3xYz') === true);
+check('a.co is a short link', shortlink.isShortLink('https://a.co/d/abc') === true);
+check('dl.flipkart.com/s is a short link', shortlink.isShortLink('https://dl.flipkart.com/s/kKLBCCuuuN') === true);
+check('fkrt.cc is a short link', shortlink.isShortLink('https://fkrt.cc/abc') === true);
+check('fkrt.it is a short link', shortlink.isShortLink('https://fkrt.it/abc') === true);
+check('flipkart.com/s is a short link', shortlink.isShortLink('https://www.flipkart.com/s/AbC123') === true);
+check('a canonical amazon url is NOT a short link', shortlink.isShortLink('https://www.amazon.in/dp/B0G81TPT89') === false);
+check('a canonical flipkart url is NOT a short link', shortlink.isShortLink('https://www.flipkart.com/x/p/itmabc?pid=MOBX1') === false);
+
+(async () => {
+  check('a non-short link is returned unchanged',
+    (await shortlink.expandShortLink('https://www.amazon.in/dp/B0G81TPT89')) === 'https://www.amazon.in/dp/B0G81TPT89');
+  const expanded = await shortlink.expandShortLink('https://dl.flipkart.com/s/kKLBCCuuuN');
+  check('a dl.flipkart.com link expands to the canonical product url', expanded === CANONICAL);
+  check('the expanded url is a canonical flipkart product page', String(expanded).includes('/p/itm'));
+  check('the expanded url is no longer a short link', shortlink.isShortLink(String(expanded)) === false);
+
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+})();

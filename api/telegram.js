@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-60 (2026-10-09)';
+const BUILD = 'names-61 (2026-10-09)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -44,6 +44,7 @@ const {
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
 const { fetchProduct, resolveProductName } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
+const { expandShortLink, isShortLink } = require('../lib/shortlink');
 
 // Load Firebase defensively: a bad/missing credential must NOT crash the whole
 // module, or even the liveness GET would 500 and give us nothing to debug with.
@@ -1486,13 +1487,26 @@ function registerHandlers(bot) {
       const text = ctx.message.text || '';
       if (text.startsWith('/')) return; // commands are handled above
 
-      const url = extractUrl(text);
+      let url = extractUrl(text);
       if (!url) {
         await ctx.reply(
           'Send me a product link and I will start tracking its price.\n\n' +
             'Example: https://www.amazon.in/dp/B08N5WRWNW'
         );
         return;
+      }
+
+      // UNIVERSAL SHORT-LINK EXPANSION — before anything else.
+      // A short link carries no product identity (no ASIN, no pid, no slug), so
+      // the canonical url has to be resolved FIRST. Doing it here means the id,
+      // the name, the price and the search fallback all work from the real url,
+      // instead of each path discovering the problem separately.
+      if (isShortLink(url)) {
+        const expanded = await expandShortLink(url).catch(() => null);
+        if (expanded && expanded !== url) {
+          console.log('track: expanded short link -> ' + String(expanded).slice(0, 90));
+          url = expanded;
+        }
       }
 
       // Feedback without clutter: a typing indicator, not a chat message.

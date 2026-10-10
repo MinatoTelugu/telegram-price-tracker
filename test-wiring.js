@@ -369,6 +369,50 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('a normal page is not', looksBlocked('<html><body>In stock</body></html>') === false);
 }
 
+// --- the alert body must not carry a raw url ---------------------------------
+// Every alert is sent with alertKeyboard(), whose "Buy Now" button carries the
+// same url. Printing it again as bare text only made the message read as clutter.
+// The BUTTONS must be untouched — that is the whole point of removing the text.
+{
+  const { alertKeyboard } = require('./api/cron.js');
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+
+  // Exercise the real formatter.
+  const fn = cron.match(/function formatAlert\([\s\S]*?\n\}/)[0];
+  eval(fn);
+  const product = {
+    title: 'Samsung Galaxy M17 5G Mobile',
+    productId: 'B0G81TPT89',
+    affiliateUrl: 'https://www.amazon.in/dp/B0G81TPT89?tag=offerszones03-21',
+  };
+  for (const kind of ['drop', 'rise', 'restock']) {
+    const out = formatAlert(product, 19999, 22999, 15, kind, true);
+    check('the ' + kind + ' alert carries no raw url', !/https?:\/\//.test(out));
+    check('the ' + kind + ' alert still names the product', out.includes('Samsung Galaxy M17 5G Mobile'));
+    check('the ' + kind + ' alert still shows the price', out.includes('22999'));
+  }
+  check('the alert body has no 🔗 line left', !/🔗/.test(formatAlert(product, 1, 2, 5, 'rise', true)));
+
+  // ...and the buttons are untouched: the url lives there.
+  const kb = alertKeyboard('amazon_B0G81TPT89', product);
+  const flat = kb.inline_keyboard.reduce((a, r) => a.concat(r), []);
+  const buy = flat.find((b) => /Buy Now/.test(b.text));
+  check('the Buy Now button still exists', Boolean(buy));
+  check('...and still carries the affiliate url',
+    buy && buy.url === 'https://www.amazon.in/dp/B0G81TPT89?tag=offerszones03-21');
+  check('Stop Tracking is still a working callback',
+    Boolean(flat.find((b) => /Stop Tracking/.test(b.text) && /^untrack:/.test(b.callback_data))));
+  check('Price History is still there', Boolean(flat.find((b) => /Price History/.test(b.text))));
+  check("Today's Deals is still there", Boolean(flat.find((b) => /Today's Deals/.test(b.text))));
+
+  // The alert is sent with that keyboard — which is what makes removing the body
+  // link safe. If this ever stops being true, the link must come back.
+  check('every alert send attaches the keyboard',
+    /sendTelegramMessage\(chatId, message, alertKeyboard\(doc\.id, data\)\)/.test(cron));
+  check('there is only one alert send site',
+    (cron.match(/sendTelegramMessage\(/g) || []).length === 3); // def + retry + the alert
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

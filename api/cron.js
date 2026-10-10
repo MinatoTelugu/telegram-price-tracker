@@ -136,8 +136,19 @@ function titleLooksUnusable(title, productId) {
 
 function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow) {
   const name = product.title ? String(product.title).slice(0, 80) : product.productId;
-  const link = product.affiliateUrl || product.cleanUrl || '';
-  const tail = link ? '\n\n🔗 ' + link : '';
+
+  // No raw URL in the body.
+  //
+  // Every alert is sent with alertKeyboard(), whose "Buy Now" button carries
+  // exactly the same url (product.affiliateUrl || product.cleanUrl). Printing it
+  // again as bare text underneath only made the message read as clutter. The
+  // button is the link — and it is a proper button, so it survives being tapped
+  // on a phone.
+  //
+  // The one case where the body WOULD need it is when there is no url at all,
+  // and then the button is absent too and there is nothing to print. So there is
+  // no configuration in which this leaves the user unable to reach the product.
+  const tail = '';
 
   // A clear header, then the stock status on its own bold line. The status was
   // buried in small text, so users read a price and assumed it was a live deal.

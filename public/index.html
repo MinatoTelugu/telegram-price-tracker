@@ -244,9 +244,14 @@
 
   function show(el) { if (el) el.style.display = ''; }
   function hide(el) { if (el) el.style.display = 'none'; }
+  var CURRENCY_SYMBOLS = { INR: '₹', USD: '$', GBP: '£', EUR: '€', AED: 'AED ' };
   function money(n, cur) {
     if (n == null || isNaN(n)) return '—';
-    var sym = (cur === 'INR' || !cur) ? '₹' : '';
+    // Normalise first: a code stored as "inr", " INR" or missing entirely must
+    // still resolve to the rupee rather than falling through to no symbol at all.
+    var code = String(cur == null ? '' : cur).trim().toUpperCase();
+    var sym = CURRENCY_SYMBOLS[code];
+    if (sym == null) sym = '₹';
     return sym + Number(n).toLocaleString('en-IN');
   }
   function stamp(ms) {
@@ -332,7 +337,11 @@
 
   // ---- render ---------------------------------------------------------------
   function render(id, p, hist) {
-    var cur = p.currency || 'INR';
+    // amazon.in and flipkart are Indian stores, so the currency IS the rupee.
+    // A scraper can guess wrong and store something else, and that is how a
+    // foreign symbol reached the analysis text.
+    var isIndianStore = p.marketplace === 'amazon' || p.marketplace === 'flipkart';
+    var cur = isIndianStore ? 'INR' : (p.currency || 'INR');
     state.history = hist;
     state.currency = cur;
 
@@ -383,8 +392,25 @@
 
     $('updated').textContent = p.lastCheckedAt ? ('Last updated ' + stamp(p.lastCheckedAt)) : '';
 
-    // stats from the REAL history
-    var prices = hist.map(function (h) { return h.price; }).filter(function (x) { return typeof x === 'number'; });
+    // stats from the REAL history — but only from readings that COULD be prices.
+    //
+    // A reading above the MRP is impossible, and one far below it is an exchange
+    // offer or an EMI instalment. Both were recorded on real products (₹53,999 on
+    // a phone whose MRP is ₹40,999; ₹6,348, the instalment in "₹6,348 x 3m"). One
+    // such reading drags the average and the high, which then pushes the gauge to
+    // "Yes" and the verdict to "a reasonable time to buy" — the very wrongness
+    // being reported. The history is cleaned server-side too; this makes the page
+    // right immediately, without waiting for that.
+    var mrpRef = (p.mrp != null && p.mrp > 0) ? p.mrp : null;
+    var usable = hist.filter(function (h) {
+      if (typeof h.price !== 'number' || !isFinite(h.price) || h.price <= 0) return false;
+      if (mrpRef == null) return true;
+      return h.price <= mrpRef * 1.02 && h.price >= mrpRef * 0.4;
+    });
+    if (!usable.length) usable = hist;
+    var prices = usable
+      .map(function (h) { return h.price; })
+      .filter(function (x) { return typeof x === 'number'; });
     var low = prices.length ? Math.min.apply(null, prices) : null;
     var high = prices.length ? Math.max.apply(null, prices) : null;
     var avg = prices.length ? Math.round(prices.reduce(function (a, b) { return a + b; }, 0) / prices.length) : null;
@@ -409,7 +435,24 @@
       pos = Math.max(0, Math.min(1, pos));
       knob.style.left = ((1 - pos) * 100) + '%';
       var aboveLow = Math.round(((last - low) / low) * 100);
-      if (pos <= 0.15) {
+
+      // A price that just WENT UP is never "a reasonable time to buy".
+      //
+      // The gauge reads position within the recorded range, and a rise can still
+      // sit low in that range — which is how a +7.4% increase produced "Yes" and
+      // "a reasonable time to buy". Buying just after a rise means paying more
+      // than the price was a moment ago, so the verdict has to say so.
+      var rose = (prev != null && last != null && last > prev);
+      if (rose) {
+        var pctUp = Math.round(((last - prev) / prev) * 100);
+        var nearHigh = pos >= 0.75;
+        // The knob reflects the honest position; the WORDS reflect the rise.
+        ex.textContent = 'The price just went UP ' + pctUp + '% (from ' + money(prev, cur) + ' to ' +
+          money(last, cur) + '). It is ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
+          '). ' + (nearHigh
+            ? 'It is also near the highest recorded (' + money(high, cur) + '), so waiting is the sensible move.'
+            : 'Waiting for it to come back down is the sensible move.');
+      } else if (pos <= 0.15) {
         ex.textContent = 'The current price is within ' + aboveLow + '% of the lowest price recorded (' +
           money(low, cur) + '). This is about as good as it has been — a reasonable time to buy.';
       } else if (pos <= 0.4) {

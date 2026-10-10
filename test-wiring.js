@@ -219,7 +219,18 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   for (const [p, m, label] of bad) {
     check('rejects ' + label, priceLooksImplausible(p, m) === true);
   }
+  const tooHigh = [
+    [53999, 40999, 'the ₹53,999 reading (above the MRP)'],
+    [45999, 40999, 'anything above the MRP'],
+  ];
+  for (const [p, m, label] of tooHigh) {
+    check('rejects ' + label, priceLooksImplausible(p, m) === true);
+  }
   const good = [
+    [18548, 25999, 'the real Flipkart price'],
+    [17145, 25999, 'the WOW deal price'],
+    [28998, 40999, 'the real Amazon price'],
+    [30998, 40999, 'a real 7% rise'],
     [21249, 21999, 'a real price'],
     [18999, 19999, 'a small discount'],
     [12999, 18999, 'a 31% discount'],
@@ -231,7 +242,13 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('with no MRP it cannot judge, so it keeps the price', priceLooksImplausible(5000, null) === false);
   check('a null price is not judged', priceLooksImplausible(null, 19999) === false);
   const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
-  check('the scanned price is checked', /priceLooksImplausible\(scanned, mrp\)/.test(scr));
+  // EVERY source is checked, not just the page-text scan: on Flipkart the price
+  // SELECTOR matches the EMI row, which is how ₹6,348 (the instalment in
+  // "₹6,348 x 3m") became the price on every check.
+  check('every source is validated in a loop', /for \(const pair of candidates\)/.test(scr));
+  check('the selector is among the validated sources', /\['selector', \(\) => parsePrice/.test(scr));
+  check('a failing source falls through to the next', /price = candidate;\s*\n\s*break;/.test(scr));
+  check('a rejection names the source', /ignored the ' \+ pair\[0\] \+ ' price/.test(scr));
   check('the last-resort price is checked too', /priceLooksImplausible\(last\.price, mrp\)/.test(scr));
 }
 

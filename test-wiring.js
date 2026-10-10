@@ -348,6 +348,27 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('a recovered MRP is kept on the product', /if \(mrp == null && last\.mrp != null/.test(scr));
 }
 
+// --- availability must be nullable, or the reader's answer is discarded -------
+// detectOutOfStock() always returns a boolean, so `!detectOutOfStock($)` was
+// never null. That made `if (inStock == null && last.inStock != null)` DEAD CODE,
+// and the reader's availability was silently thrown away on every product. For a
+// store that refuses us, the "availability" in use was a read of a robot-check
+// page — which is why cards said "Out of stock" for products the store shows as
+// "In stock".
+{
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('availability is gated on the page being usable',
+    /const pageUsable = !looksBlocked\(\$\.html\(\)\) && \$\('body'\)\.text\(\)\.trim\(\)\.length > 500/.test(scr));
+  check('...and is null when it is not', /const inStock = pageUsable \? !detectOutOfStock\(\$\) : null/.test(scr));
+  check('the last-resort availability can therefore be used',
+    /if \(inStock == null && last\.inStock != null\) inStock = last\.inStock/.test(scr));
+
+  // The gate itself, exercised.
+  const { looksBlocked } = require('./lib/scraper');
+  check('a robot-check page is detected', looksBlocked('<html>Enter the characters you see below</html>') === true);
+  check('a normal page is not', looksBlocked('<html><body>In stock</body></html>') === false);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

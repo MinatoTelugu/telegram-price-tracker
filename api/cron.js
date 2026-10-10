@@ -44,6 +44,9 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || { PRODUCTS: 'products', PRICE_HIST
 const BATCH_SIZE = parseInt(process.env.CRON_BATCH_SIZE || '20', 10);
 const DROP_THRESHOLD = parseFloat(process.env.PRICE_DROP_THRESHOLD_PERCENT || '1');
 const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCENT || '5');
+// A move this large, from a source we cannot verify against the store, is
+// re-read once before it is believed. See confirmLargeMove().
+const CONFIRM_THRESHOLD = parseFloat(process.env.PRICE_CONFIRM_THRESHOLD_PERCENT || '10');
 const HISTORY_DAYS = 30;
 // The history sanity pass runs by itself, once a day, so a polluted history is
 // repaired without anyone having to remember a command. Set CLEAN_HOUR=-1 to
@@ -335,7 +338,46 @@ async function processProduct(doc) {
   }
 
   const oldPrice = typeof data.lastPrice === 'number' ? data.lastPrice : null;
-  const newPrice = result.price;
+  const newPriceRaw = result.price;
+  // A LARGE move is confirmed before it is believed or alerted on.
+  //
+  // The reported product flipped between ₹21,999 and ₹22,999 from one check to
+  // the next — while the store's own page showed ₹21,999 throughout — and each
+  // flip produced a "PRICE INCREASE ALERT +15%" for a price that never changed.
+  // For a store that refuses us the price comes from a third-party reading, and
+  // one such reading can be another seller's or another variant's figure.
+  //
+  // So: when the change is large, read once more. If the second reading agrees,
+  // the move is real and everything proceeds. If it disagrees, the FIRST reading
+  // was the odd one — the confirmed value is adopted instead, and no alert is
+  // sent. If the re-read fails, we change nothing and carry on as before, because
+  // an inability to check must never silence a genuine alert.
+  let confirmedPrice = newPriceRaw;
+  if (oldPrice != null && confirmedPrice != null && oldPrice > 0 && Math.abs(((confirmedPrice - oldPrice) / oldPrice) * 100) >= CONFIRM_THRESHOLD) {
+    try {
+      const again = await fetchProduct(
+        result.resolvedUrl || data.fetchUrl || data.cleanUrl || data.affiliateUrl,
+        data.marketplace
+      );
+      if (again && again.ok && again.price != null) {
+        if (again.price !== confirmedPrice) {
+          console.warn(
+            'cron: ' + doc.id + ' — price ' + confirmedPrice + ' not confirmed (re-read ' +
+              again.price + '); using the confirmed value and sending no alert'
+          );
+          confirmedPrice = again.price;
+        } else {
+          console.log('cron: ' + doc.id + ' — price ' + confirmedPrice + ' confirmed on a second read');
+        }
+      }
+    } catch (err) {
+      console.warn('cron: ' + doc.id + ' — could not confirm the move (' + err.message + '); proceeding');
+    }
+  }
+
+
+  const newPrice = confirmedPrice;
+
   // Capture the PREVIOUS stock state BEFORE the update below. Reading it after
   // the write is fragile — the snapshot may already reflect the new value.
   const wasOutOfStock = data.inStock === false;

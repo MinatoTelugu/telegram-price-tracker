@@ -413,6 +413,45 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     (cron.match(/sendTelegramMessage\(/g) || []).length === 3); // def + retry + the alert
 }
 
+// --- a large move is confirmed before it is believed or alerted on -----------
+// The reported product flipped between ₹21,999 and ₹22,999 from one check to the
+// next while the store's own page showed ₹21,999 throughout, and each flip sent a
+// "PRICE INCREASE ALERT +15%" for a price that never changed.
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('there is a confirmation threshold', /PRICE_CONFIRM_THRESHOLD_PERCENT/.test(cron));
+  check('a large move triggers a re-read', /Math\.abs\(\(\(confirmedPrice - oldPrice\) \/ oldPrice\) \* 100\) >= CONFIRM_THRESHOLD/.test(cron));
+  check('the re-read uses the same product url',
+    /const again = await fetchProduct\(/.test(cron));
+  check('a disagreeing re-read replaces the price', /confirmedPrice = again\.price;/.test(cron));
+  check('...and the confirmed value is what gets stored', /const newPrice = confirmedPrice;/.test(cron));
+  check('a FAILED re-read changes nothing, so a genuine alert is never silenced',
+    /could not confirm the move/.test(cron) && !/confirmedPrice = null/.test(cron));
+  check('the confirmation runs BEFORE the history point is written',
+    cron.indexOf('confirmedPrice = again.price') < cron.indexOf('Append the history point'));
+
+  // The rule, exercised.
+  const CONFIRM_THRESHOLD = 10;
+  function decide(oldPrice, firstRead, reRead) {
+    let confirmed = firstRead;
+    let alert = true;
+    if (oldPrice != null && confirmed != null && oldPrice > 0 &&
+        Math.abs(((confirmed - oldPrice) / oldPrice) * 100) >= CONFIRM_THRESHOLD) {
+      if (reRead != null && reRead !== confirmed) { confirmed = reRead; alert = false; }
+    }
+    return { confirmed, alert };
+  }
+  const flip = decide(19999, 22999, 21999);
+  check('the reported flip is corrected to the store price', flip.confirmed === 21999);
+  check('...and sends no alert', flip.alert === false);
+  const real = decide(19999, 22999, 22999);
+  check('a confirmed rise is kept', real.confirmed === 22999 && real.alert === true);
+  const unverifiable = decide(19999, 22999, null);
+  check('an unverifiable rise is still alerted', unverifiable.alert === true);
+  const small = decide(21999, 22439, null);
+  check('a small move is not re-read at all', small.confirmed === 22439 && small.alert === true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

@@ -45,6 +45,10 @@ const BATCH_SIZE = parseInt(process.env.CRON_BATCH_SIZE || '20', 10);
 const DROP_THRESHOLD = parseFloat(process.env.PRICE_DROP_THRESHOLD_PERCENT || '1');
 const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCENT || '5');
 const HISTORY_DAYS = 30;
+// The history sanity pass runs by itself, once a day, so a polluted history is
+// repaired without anyone having to remember a command. Set CLEAN_HOUR=-1 to
+// switch it off and drive it by hand instead.
+const CLEAN_HOUR = parseInt(process.env.CLEAN_HOUR || '3', 10);
 const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
 
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
@@ -498,6 +502,39 @@ async function registerCommands() {
   }
 }
 
+/**
+ * Run the history repair automatically, once a day.
+ *
+ * A polluted history has to be cleared for the chart and the lowest/average
+ * stats to mean anything, and asking a person to remember a command (and a token)
+ * means it never happens. This runs in the background, is bounded, and never
+ * fails the price check it rides along with.
+ */
+let lastAutoCleanDay = null;
+async function maybeAutoClean() {
+  try {
+    if (CLEAN_HOUR < 0) return;
+    const now = new Date();
+    // IST, to match the schedules the user sets.
+    const istHour = new Date(now.getTime() + 5.5 * 60 * 60 * 1000).getUTCHours();
+    const day = now.toISOString().slice(0, 10);
+    if (istHour !== CLEAN_HOUR || lastAutoCleanDay === day) return;
+    lastAutoCleanDay = day;
+
+    const { cleanHistory } = require('../lib/cleanHistory');
+    const report = await cleanHistory({
+      apply: true,
+      log: (line) => console.log('auto-clean: ' + line),
+    });
+    console.log(
+      'auto-clean: done — scanned=' + report.scanned + ' affected=' + report.affected +
+        ' removed=' + report.removed + ' lastPriceFixed=' + report.lastPriceFixed
+    );
+  } catch (err) {
+    console.warn('auto-clean failed (the price check is unaffected):', err.message);
+  }
+}
+
 module.exports = async (req, res) => {
   // Auth: Vercel Cron sends "Authorization: Bearer $CRON_SECRET".
   const secret = process.env.CRON_SECRET;
@@ -554,6 +591,9 @@ module.exports = async (req, res) => {
       'cron: price check start — ' + docs.length + ' active of ' + totalProducts +
         ' product(s), processing ' + batch.length
     );
+
+    // Repair the history in the background, once a day. Never awaited.
+    maybeAutoClean().catch(() => {});
 
     const results = [];
     let alertsTotal = 0;

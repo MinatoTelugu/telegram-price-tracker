@@ -310,6 +310,47 @@ const fixture = [
   check('cleanHistory passes the product MRP to the check', /mrp: typeof d\.mrp === 'number'/.test(lib));
 }
 
+// --- the repair runs BY ITSELF ----------------------------------------------
+// Asking a person to remember a command and a token means the history never gets
+// cleared. The cron now does it once a day, in the background.
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the cron has an automatic history repair', /function maybeAutoClean/.test(cron));
+  check('it applies, rather than only reporting', /cleanHistory\(\{[\s\S]{0,120}apply: true/.test(cron));
+  check('it is wired into the price-check run', /maybeAutoClean\(\)\.catch/.test(cron));
+  check('it is never awaited, so it cannot delay the check',
+    !/await maybeAutoClean/.test(cron));
+  check('it runs at most once a day', /lastAutoCleanDay === day/.test(cron));
+  check('it can be switched off', /CLEAN_HOUR/.test(cron));
+  check('a failure cannot break the price check',
+    /auto-clean failed \(the price check is unaffected\)/.test(cron));
+}
+
+// --- an MRP violation is CERTAIN, not statistical ---------------------------
+// A history where EVERY reading is wrong has no honest baseline, so the
+// distributional check cannot judge it and the fraction guard would refuse. The
+// MRP can, and a reading outside it needs no comparison with anything.
+{
+  const all = [];
+  for (let i = 0; i < 10; i++) all.push(pt('j' + i, 6348, i + 1));
+  const v = findBadPoints(all, { mrp: 25999 });
+  check('a history that is ENTIRELY the EMI instalment is cleared', v.drop.length === 10);
+  check('...and is marked certain', v.certain === true);
+
+  const honest = [];
+  for (let i = 0; i < 10; i++) honest.push(pt('h' + i, 18548, i + 1));
+  check('a history of the real price is left alone',
+    findBadPoints(honest, { mrp: 25999 }).drop.length === 0);
+
+  // The fraction guard still applies to distributional findings.
+  const mixed = [];
+  for (let i = 0; i < 3; i++) mixed.push(pt('a' + i, 19999, i + 1));
+  for (let i = 0; i < 4; i++) mixed.push(pt('b' + i, 5000, 10 + i));
+  const refused = findBadPoints(mixed, {});
+  check('without an MRP the fraction guard still refuses a gutted history',
+    refused.drop.length === 0 && /refused/.test(String(refused.reason)));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
     process.exit(fail ? 1 : 0);
   })();

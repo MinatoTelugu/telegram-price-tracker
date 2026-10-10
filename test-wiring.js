@@ -341,8 +341,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the last-resort result carries an MRP', /out\.mrp = mrpFromText\(page\.text\)/.test(scr));
   check('the last-resort result carries availability',
     /out\.inStock = availabilityFromText\(page\.text\)/.test(scr));
-  check('the hosted API MRP is used when the text had none',
-    /out\.mrp == null && item\.mrp != null/.test(scr));
+  check('the hosted API MRP is used', /out\.mrp = item\.mrp;/.test(scr));
   check('the caller judges by the effective MRP, not a null one',
     /const effectiveMrp = mrp != null \? mrp : last\.mrp != null \? last\.mrp : null/.test(scr));
   check('a recovered MRP is kept on the product', /if \(mrp == null && last\.mrp != null/.test(scr));
@@ -421,8 +420,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
   check('there is a confirmation threshold', /PRICE_CONFIRM_THRESHOLD_PERCENT/.test(cron));
   check('a large move triggers a re-read', /Math\.abs\(\(\(confirmedPrice - oldPrice\) \/ oldPrice\) \* 100\) >= CONFIRM_THRESHOLD/.test(cron));
-  check('the re-read uses the same product url',
-    /const again = await fetchProduct\(/.test(cron));
+  check('the re-read can reach the page for non-Amazon stores', /again = await fetchProduct\(/.test(cron));
   check('a disagreeing re-read replaces the price', /confirmedPrice = again\.price;/.test(cron));
   check('...and the confirmed value is what gets stored', /const newPrice = confirmedPrice;/.test(cron));
   check('a FAILED re-read changes nothing, so a genuine alert is never silenced',
@@ -450,6 +448,37 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('an unverifiable rise is still alerted', unverifiable.alert === true);
   const small = decide(21999, 22439, null);
   check('a small move is not re-read at all', small.confirmed === 22439 && small.alert === true);
+}
+
+// --- for Amazon the hosted API is the PRIMARY price source -------------------
+// It returns the BUYBOX price and availability as structured fields. The reader
+// hands back free text, and we have to guess which number is the price — which is
+// how a card came to read ₹22,999 for a product the store lists at ₹21,999, with
+// neither ₹22,999 nor the ₹19,999 before it appearing on the page at all.
+{
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  const fn = scr.slice(scr.indexOf('async function lastResortProduct'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+
+  check('the hosted API is consulted for Amazon', /marketplace === 'amazon' && amazonApiConfigured\(\)/.test(body));
+  check('...BEFORE the reader is fetched',
+    body.indexOf('lookupAsinApi') < body.indexOf('fetchReadablePage'));
+  check('its price is taken as authoritative', /out\.price = item\.price;/.test(body));
+  check('its stock is taken as authoritative', /out\.inStock = item\.inStock;/.test(body));
+  check('the reader still supplies the title when the API has none',
+    /if \(!out\.title && page\.title/.test(body));
+  check('the reader still supplies the MRP when the API has none',
+    /if \(out\.mrp == null\) out\.mrp = mrpFromText/.test(body));
+  check('the reader only fills a price the API did not give',
+    /if \(out\.price == null\) out\.price = priceFromText/.test(body));
+  check('Flipkart still works through the reader alone',
+    /if \(out\.inStock == null\) out\.inStock = availabilityFromText/.test(body));
+
+  // The confirmation must use an INDEPENDENT source, or it confirms its own error.
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the confirmation uses the hosted API for Amazon', /const item = asin \? await lookupAsin\(asin\)/.test(cron));
+  check('...and falls back to a page read for other stores', /again = await fetchProduct\(/.test(cron));
+  check('...and the independent figure wins when they disagree', /confirmedPrice = again\.price;/.test(cron));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

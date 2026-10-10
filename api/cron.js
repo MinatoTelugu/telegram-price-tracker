@@ -355,10 +355,25 @@ async function processProduct(doc) {
   let confirmedPrice = newPriceRaw;
   if (oldPrice != null && confirmedPrice != null && oldPrice > 0 && Math.abs(((confirmedPrice - oldPrice) / oldPrice) * 100) >= CONFIRM_THRESHOLD) {
     try {
-      const again = await fetchProduct(
-        result.resolvedUrl || data.fetchUrl || data.cleanUrl || data.affiliateUrl,
-        data.marketplace
-      );
+      // The second reading must come from a DIFFERENT source. Re-reading the same
+      // one only confirms its own mistake: the reported price stayed ₹22,999 on
+      // every read because every read used the same text scan.
+      //
+      // For Amazon the independent check is the hosted API, whose price IS the
+      // buybox. For anything else it is the page itself.
+      let again = null;
+      if (data.marketplace === 'amazon') {
+        const { lookupAsin } = require('../lib/amazonapi');
+        const asin = result.productId || data.productId;
+        const item = asin ? await lookupAsin(asin).catch(() => null) : null;
+        if (item && item.price != null) again = { ok: true, price: item.price };
+      }
+      if (!again) {
+        again = await fetchProduct(
+          result.resolvedUrl || data.fetchUrl || data.cleanUrl || data.affiliateUrl,
+          data.marketplace
+        );
+      }
       if (again && again.ok && again.price != null) {
         if (again.price !== confirmedPrice) {
           console.warn(

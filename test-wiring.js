@@ -249,7 +249,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the selector is among the validated sources', /\['selector', \(\) => parsePrice/.test(scr));
   check('a failing source falls through to the next', /price = candidate;\s*\n\s*break;/.test(scr));
   check('a rejection names the source', /ignored the ' \+ pair\[0\] \+ ' price/.test(scr));
-  check('the last-resort price is checked too', /priceLooksImplausible\(last\.price, mrp\)/.test(scr));
+  check('the last-resort price is checked against the effective MRP', /priceLooksImplausible\(last\.price, effectiveMrp\)/.test(scr));
 }
 
 // --- the reader must be given enough time ------------------------------------
@@ -307,6 +307,45 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('an Omkar key alone configures it', amazonApiConfigured() === true);
   process.env.RAPIDAPI_KEY = saved.r;
   process.env.OMKAR_API_KEY = saved.o;
+}
+
+// --- the MRP must be readable when the store blocks us -----------------------
+// The reader hands us the whole page as markdown, "M.R.P.: ₹40,999" included,
+// even when Amazon refuses our own request. Without reading the MRP from THAT
+// text, mrp was null for every Amazon product — and a null MRP means the sanity
+// check cannot judge anything, which is how ₹53,999 survived on a phone whose
+// MRP is ₹40,999. That was the reported bug.
+{
+  const { mrpFromText, availabilityFromText, priceLooksImplausible } = require('./lib/scraper');
+  const amazon = 'Title: iQOO Z11xa 5G\n-29%\n₹28,998\nM.R.P.: ₹40,999\n₹53,999';
+  check('the MRP is read from the reader text', mrpFromText(amazon) === 40999);
+  check('...so the ₹53,999 reading is rejected', priceLooksImplausible(53999, mrpFromText(amazon)) === true);
+  check('...and the real ₹28,998 is kept', priceLooksImplausible(28998, mrpFromText(amazon)) === false);
+
+  const flip = '₹18,548\nM.R.P.: ₹25,999\n₹6,348 x 3m';
+  check('the Flipkart MRP is read too', mrpFromText(flip) === 25999);
+  check('...so the EMI instalment is rejected', priceLooksImplausible(6348, mrpFromText(flip)) === true);
+
+  check('no MRP in the text yields null', mrpFromText('just a page') === null);
+
+  // Availability, from the same text.
+  check('"In stock" reads as in stock', availabilityFromText('In stock\n₹28,998') === false);
+  check('"Currently unavailable" reads as out of stock',
+    availabilityFromText('Currently unavailable') === true);
+  check('"Out of stock" reads as out of stock', availabilityFromText('Out of stock') === true);
+  check('a bare "Notify Me" is too weak to judge', availabilityFromText('Notify Me') === null);
+  check('an unstated page yields null', availabilityFromText('nothing here') === null);
+
+  // The last-resort path must carry both through.
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the last-resort result carries an MRP', /out\.mrp = mrpFromText\(page\.text\)/.test(scr));
+  check('the last-resort result carries availability',
+    /out\.inStock = availabilityFromText\(page\.text\)/.test(scr));
+  check('the hosted API MRP is used when the text had none',
+    /out\.mrp == null && item\.mrp != null/.test(scr));
+  check('the caller judges by the effective MRP, not a null one',
+    /const effectiveMrp = mrp != null \? mrp : last\.mrp != null \? last\.mrp : null/.test(scr));
+  check('a recovered MRP is kept on the product', /if \(mrp == null && last\.mrp != null/.test(scr));
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

@@ -400,10 +400,15 @@ async function processProduct(doc) {
   // ₹19,999 phone that was not even in stock.
   const outOfStockNow = result.inStock === false;
 
+  // Only the DROP is suppressed while out of stock — that was the reported bug,
+  // a false drop on an item showing "Notify Me". A RISE is never that kind of
+  // false alarm, and suppressing it too (an earlier version did) meant an
+  // out-of-stock item produced NO alerts of any kind, which is indistinguishable
+  // from the bot being broken.
   let message = null;
   if (!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD) {
     message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'drop', result.inStock);
-  } else if (!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD) {
+  } else if (pct != null && pct >= INCREASE_THRESHOLD) {
     message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise', result.inStock);
   }
 

@@ -254,7 +254,63 @@ const fixture = [
     check('there is a Telegram admin command for it', /cleanhistory/.test(tg));
     check('the Telegram command checks the admin', /cleanhistory[\s\S]{0,400}resolveAdminId/.test(tg));
 
-    console.log('\n' + pass + ' passed, ' + fail + ' failed');
+    // --- a reading ABOVE the MRP is not a price ---------------------------------
+// The reported page showed Highest ₹53,999 for a phone whose MRP is ₹40,999.
+// The high side is judged against the MRP, because a median cannot separate
+// "the price legitimately fell" from "junk appeared": with a majority-low history
+// the median sits low and the honest readings become the outliers. Readings above
+// the MRP are also excluded from the floor's reference — one such reading would
+// otherwise drag it up and make the honest readings the candidates.
+{
+  // Build real reading objects — a bare number has no .price and is filtered out.
+  const hi = [];
+  for (let i = 0; i < 20; i++) hi.push(pt('hi' + i, 28998, i + 1));
+  const withJunk = [...hi, pt('junk', 53999, 30), ...hi];
+  const v = findBadPoints(withJunk, { mrp: 40999 });
+  check('a reading above the MRP is removed', v.drop.length === 1 && v.drop[0] === 'junk');
+
+  const twoJunk = [...hi, pt('j1', 53999, 30), pt('j2', 53999, 31), ...hi];
+  check('a run of them is removed together', findBadPoints(twoJunk, { mrp: 40999 }).drop.length === 2);
+
+  // A real 7% rise must survive — it is below the MRP and it persists.
+  const risen = [...hi];
+  for (let i = 0; i < 20; i++) risen.push(pt('r' + i, 30998, 30 + i));
+  check('a real rise is kept', findBadPoints(risen, { mrp: 40999 }).drop.length === 0);
+
+  // The real drop from the same page must survive too.
+  const dropped = [...hi];
+  for (let i = 0; i < 4; i++) dropped.push(pt('dr' + i, 26998, 30 + i));
+  dropped.push(...hi);
+  check('the real drop to ₹26,998 is kept', findBadPoints(dropped, { mrp: 40999 }).drop.length === 0);
+
+  // Without an MRP there is no principled ceiling, so a high reading is KEPT.
+  // That is deliberate: keeping one wrong reading is far cheaper than deleting
+  // honest ones.
+  check('with no MRP a high reading is left alone',
+    findBadPoints(withJunk, {}).drop.length === 0);
+
+  // The cases that must not regress.
+  check('a deep but lasting drop is still kept',
+    findBadPoints([pt('a', 19999, 1), pt('b', 19999, 2), pt('c', 12000, 3),
+      pt('d', 12000, 4), pt('e', 12000, 5), pt('f', 12000, 6)], {}).drop.length === 0);
+  const held = [pt('a', 19999, 1), pt('b', 19999, 2)];
+  for (let i = 0; i < 20; i++) held.push(pt('h' + i, 11000, 3 + i));
+  held.push(pt('y', 19999, 40), pt('z', 19999, 41));
+  check('a low price holding for many hours is still kept',
+    findBadPoints(held, {}).drop.length === 0);
+  const misread = [];
+  for (let i = 0; i < 20; i++) misread.push(pt('a' + i, 19999, i + 1));
+  for (let i = 0; i < 4; i++) misread.push(pt('bad' + i, 10490, 21 + i));
+  for (let i = 0; i < 20; i++) misread.push(pt('z' + i, 19999, 40 + i));
+  check('the reported exchange misread is still removed',
+    findBadPoints(misread, {}).drop.length === 4);
+
+  // cleanHistory must hand the MRP to the check.
+  const lib = fs.readFileSync(__dirname + '/lib/cleanHistory.js', 'utf8');
+  check('cleanHistory passes the product MRP to the check', /mrp: typeof d\.mrp === 'number'/.test(lib));
+}
+
+console.log('\n' + pass + ' passed, ' + fail + ' failed');
     process.exit(fail ? 1 : 0);
   })();
 }

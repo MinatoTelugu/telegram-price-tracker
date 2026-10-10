@@ -72,7 +72,13 @@ check('a photo card upgrade exists for cards that gain an image', tg.includes('u
 const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
 check('the cron detects the out-of-stock state before alerting', cron.includes('outOfStockNow'));
 check('a drop alert is gated on being in stock', /!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD/.test(cron));
-check('a rise alert is gated on being in stock', /!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD/.test(cron));
+// A rise is NOT gated on stock: gating both meant an out-of-stock item produced
+// no alerts of any kind, which is indistinguishable from the bot being broken.
+check('a rise alert is NOT gated on stock state',
+  /pct != null && pct >= INCREASE_THRESHOLD/.test(cron) &&
+    !/!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD/.test(cron));
+check('a drop alert IS still gated on stock state',
+  /!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD/.test(cron));
 check('the alert carries a bold in-stock status line', cron.includes('STATUS: IN STOCK'));
 check('the alert carries a bold out-of-stock status line', cron.includes('STATUS: OUT OF STOCK'));
 check('the alert has a price-drop header', cron.includes('PRICE DROP ALERT'));

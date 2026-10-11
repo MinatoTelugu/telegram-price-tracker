@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-107 (2026-10-11)';
+const BUILD = 'names-108 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1427,6 +1427,12 @@ function registerHandlers(bot) {
           (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY
             ? 'set'
             : 'not set')
+      );
+      lines.push(
+        'Oxylabs (primary scraper): ' +
+          (process.env.OXYLABS_USERNAME && process.env.OXYLABS_PASSWORD
+            ? 'set — Amazon uses the structured buy-box parser, Flipkart uses rendered HTML'
+            : 'NOT set — falling back to the reader/hosted API')
       );
       lines.push('WEB_APP_URL: ' + (process.env.WEB_APP_URL || 'not set'));
       lines.push(

@@ -17,7 +17,7 @@ function check(name, cond, extra) {
   else { failed++; console.log('  FAIL ' + name + (extra ? '  -> ' + extra : '')); }
 }
 
-const { firstBuyboxText, isInRelatedBlock } = scraper;
+const { firstBuyboxText, isInRelatedBlock, isStruckThrough } = scraper;
 
 console.log('--- Amazon: a carousel price sits ABOVE the buy box ---');
 
@@ -122,6 +122,60 @@ check('Amazon no longer has the bare .a-price .a-offscreen',
   !/^\s*'\.a-price \.a-offscreen',/m.test(src));
 check('the price is read through the buy-box-aware reader',
   /parsePrice\(firstBuyboxText\(\$, cfg\.price\)\)/.test(src));
+
+console.log('--- Amazon: the struck-through M.R.P. is never the price ---');
+
+// The reported case, as real Amazon markup: the selling price and the struck
+// M.R.P. live in the SAME price block, so a selector that matches
+// "span.a-price-whole" inside it matches BOTH and .first() can land on the M.R.P.
+const AMZ_MRP_BLOCK = `
+<html><body>
+  <div id="corePriceDisplay_desktop_feature_div">
+    <span class="a-price a-text-price" data-a-strike="true">
+      <span class="a-offscreen">₹23,999</span>
+      <span class="a-price-whole">23,999</span>
+    </span>
+    <span class="a-price">
+      <span class="a-offscreen">₹22,999</span>
+      <span class="a-price-whole">22,999</span>
+    </span>
+  </div>
+</body></html>`;
+const $m = cheerio.load(AMZ_MRP_BLOCK);
+const scoped = ['#corePriceDisplay_desktop_feature_div span.a-price-whole'];
+check('the M.R.P. element is recognised as struck through',
+  isStruckThrough($m, $m('#corePriceDisplay_desktop_feature_div .a-text-price .a-price-whole').first()) === true);
+check('the selling element is not',
+  isStruckThrough($m, $m('#corePriceDisplay_desktop_feature_div .a-price:not(.a-text-price) .a-price-whole').first()) === false);
+check('the reader returns the SELLING price, not the M.R.P.',
+  /22,999/.test(String(firstBuyboxText($m, scoped))), String(firstBuyboxText($m, scoped)));
+check('...and it is not the M.R.P. figure',
+  !/23,999/.test(String(firstBuyboxText($m, scoped))));
+check('the old blind .first() really would have taken the M.R.P.',
+  $m('#corePriceDisplay_desktop_feature_div span.a-price-whole').first().text().trim() === '23,999');
+
+// apexPriceToPay, which exists to say which figure is the one you pay.
+const AMZ_APEX = `
+<html><body>
+  <div id="corePriceDisplay_desktop_feature_div">
+    <span class="a-price a-text-price"><span class="a-offscreen">₹23,999</span></span>
+    <div id="apexPriceToPay"><span class="a-price"><span class="a-offscreen">₹22,999</span></span></div>
+  </div>
+</body></html>`;
+const $a = cheerio.load(AMZ_APEX);
+check('apexPriceToPay is preferred when present',
+  /22,999/.test(String(firstBuyboxText($a, ['#apexPriceToPay .a-offscreen', '#corePriceDisplay_desktop_feature_div .a-price .a-offscreen']))));
+
+// A <del> or a line-through style counts too.
+const DEL = '<html><body><div id="ppd"><del>₹23,999</del><span class="a-price-whole">22,999</span></div></body></html>';
+const $d = cheerio.load(DEL);
+check('a <del> price is skipped', /22,999/.test(String(firstBuyboxText($d, ['#ppd .a-price-whole', '#ppd del']))));
+
+// Flipkart marks the M.R.P. with its own class; the same skip applies.
+const FK = '<html><body><div class="v1zwnj"><div class="yRaY8j">₹23,999</div><div class="Nx9bqj">₹22,999</div></div></body></html>';
+const $f = cheerio.load(FK);
+check('Flipkart still reads its own price', /22,999/.test(String(firstBuyboxText($f, ['div.Nx9bqj']))));
+
 
 console.log('');
 console.log(passed + ' passed, ' + failed + ' failed');

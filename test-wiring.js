@@ -306,6 +306,10 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...and no startup warning mentions a removed provider', !/OMKAR/.test(server));
   check('the startup banner warns when the check schedule would exhaust the API quota',
     /PRICE_CRON is \"/.test(server) && /1,000/.test(server));
+  check('the startup banner says which scraper is in play',
+    /Scraper: Oxylabs Web API key set/.test(server));
+  check('...and names the missing credentials when there are none',
+    /no Oxylabs credentials/.test(server) && /OXYLABS_API_KEY/.test(server));
 
   const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
   check('.env.example no longer offers the dead Omkar key', !/^OMKAR_API_KEY=/m.test(env));

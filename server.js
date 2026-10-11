@@ -54,6 +54,21 @@ if (!hasFirebase) {
       'FIREBASE_SERVICE_ACCOUNT_KEY (or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY).'
   );
 }
+// Say which scraper is actually in play. Its absence from a log was itself the
+// problem: a run showed Amazon products being blocked with no mention of
+// Oxylabs, and there was no way to tell whether the key was missing, the code
+// was older, or it had simply never been reached.
+if (process.env.OXYLABS_API_KEY) {
+  console.log('Scraper: Oxylabs Web API key set (Bearer -> webapi.oxylabs.io) — primary for Amazon and Flipkart.');
+} else if (process.env.OXYLABS_USERNAME && process.env.OXYLABS_PASSWORD) {
+  console.log('Scraper: Oxylabs Web Scraper API credentials set (Basic -> realtime.oxylabs.io).');
+} else {
+  console.warn(
+    'NOTE: no Oxylabs credentials. Amazon is blocked from this host, so Amazon ' +
+      'prices will fall back to the reader text scan and RapidAPI. Set ' +
+      'OXYLABS_API_KEY (Web API) or OXYLABS_USERNAME + OXYLABS_PASSWORD (Web Scraper API).'
+  );
+}
 if (!process.env.WEB_APP_URL) {
   console.warn('NOTE: WEB_APP_URL is not set, so the "Price History" button will be hidden.');
 }

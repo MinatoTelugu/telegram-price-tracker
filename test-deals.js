@@ -225,6 +225,33 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   const allWomen = order(cands.map((d) => ({ id: d.id, title: 'Women Kurti ' + d.id })), { men: 0, women: 0 }, 10);
   check('an all-women pool cannot exceed the women quota', allWomen.length <= 2);
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  // ---------------------------------------------------------------------------
+// A listing card's text is not a product name. This is from the live log: the
+// channel was about to receive "Add to CompareApple iPhone 17 (Black, 256 GB)
+// 4.628,706 Ratin" as a product title.
+// ---------------------------------------------------------------------------
+{
+  const deals = require('./lib/deals');
+  const cases = [
+    ['Add to CompareApple iPhone 17 (Black, 256 GB)4.628,706 Ratin', 'Apple iPhone 17 (Black, 256 GB)'],
+    ['Add to CompareHMD Vibe2 5G (Cosmic Lavender, 128 GB)4.55,725', 'HMD Vibe2 5G (Cosmic Lavender, 128 GB)'],
+    ['Add to CompareApple iPhone 17 (White, 256 GB)4.628,706 Ratin', 'Apple iPhone 17 (White, 256 GB)'],
+    ['Casual Regular Sleeves Embroidered Women Black Top', 'Casual Regular Sleeves Embroidered Women Black Top'],
+    ['Pack of 3 Printed Men Trunk', 'Pack of 3 Printed Men Trunk'],
+    ['Printed Georgette Stitched Flared/A-line Gown', 'Printed Georgette Stitched Flared/A-line Gown'],
+  ];
+  for (const [input, want] of cases) {
+    const got = deals.cleanDealTitle(input);
+    check('cleans: ' + input.slice(0, 40), got === want, JSON.stringify(got));
+  }
+  check('the "Add to Compare" control never reaches a caption',
+    !/add to compare/i.test(deals.cleanDealTitle('Add to CompareApple iPhone 17 (Black, 256 GB)4.628,706 Ratin') || ''));
+  check('no trailing rating reaches a caption',
+    !/ratin/i.test(deals.cleanDealTitle('Add to CompareApple iPhone 17 (Black, 256 GB)4.628,706 Ratin') || ''));
+  check('an empty title yields null', deals.cleanDealTitle('') === null);
+}
+
+
+console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

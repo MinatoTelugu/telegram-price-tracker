@@ -43,6 +43,37 @@ if (!token) {
   process.exit(1);
 }
 
+// ── THE PRICE-CHECK SCHEDULE ────────────────────────────────────────────────
+// ONE definition, because there were two and they disagreed. The warning below
+// used '0 */6 * * *' as its idea of the default while the scheduler further down
+// used '*/30 * * * *'. So the real default was thirty-minutely, and the warning
+// written to catch exactly that never saw it.
+//
+// Every 30 minutes across a few dozen products is thousands of calls a day
+// against a free tier of 1,000 a MONTH. Every 6 hours is plenty for a price
+// tracker and leaves quota for the products that actually move.
+const DEFAULT_PRICE_CRON = '0 */6 * * *';
+
+/**
+ * Does this schedule run more often than the API quota can serve?
+ *
+ * Reads the MINUTE field — the first one — of the cron expression. The earlier
+ * version was /^\*\/30\b/ with a DOUBLED backslash, so it looked for a literal
+ * backslash and never matched anything at all. Worse, the test only grepped the
+ * source for that pattern, so it passed while the check was dead. The test now
+ * calls this function with real expressions.
+ */
+function tooFrequent(expr) {
+  const minute = String(expr || '').trim().split(/\s+/)[0] || '';
+  if (minute === '*') return true;                 // every minute
+  const step = /^\*\/(\d+)$/.exec(minute);         // */N
+  if (step) return parseInt(step[1], 10) < 60;     // more than once an hour
+  if (/^\d+(?:,\d+)+$/.test(minute)) {             // "0,30"
+    return minute.split(',').length > 2;
+  }
+  return false;
+}
+
 // Tell the operator clearly what is missing, instead of dying silently.
 const hasFirebase =
   Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_KEY) ||
@@ -77,18 +108,14 @@ if (!process.env.WEB_APP_URL) {
 // Amazon source we have, so a */30 schedule over a few dozen products exhausts it
 // in days — and when it is gone, Amazon falls back to the reader's text scan,
 // which is the guess that produced the wrong prices in the first place.
-const priceCron = process.env.PRICE_CRON || '0 */6 * * *';
-{
-  const every30 = /^\*\/30\b/.test(priceCron.trim());
-  const everyMinute = /^\*\s|^\*\/\d+\b/.test(priceCron.trim()) && !/\/30|\/1[0-9]|\/[2-9][0-9]/.test(priceCron.trim());
-  if (every30 || everyMinute) {
-    console.warn(
-      'NOTE: PRICE_CRON is "' + priceCron + '". The Amazon API free tier is 1,000 ' +
-        'calls/month; a schedule this frequent will exhaust it within days, after ' +
-        'which Amazon prices fall back to a text guess. Every 2-6 hours is plenty ' +
-        'for a price tracker.'
-    );
-  }
+const priceCron = process.env.PRICE_CRON || DEFAULT_PRICE_CRON;
+if (tooFrequent(priceCron)) {
+  console.warn(
+    'NOTE: PRICE_CRON is "' + priceCron + '". The Amazon API free tier is 1,000 ' +
+      'calls/month; a schedule this frequent will exhaust it within days, after ' +
+      'which Amazon prices fall back to a text guess. Every 2-6 hours is plenty ' +
+      'for a price tracker.'
+  );
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -348,7 +375,7 @@ async function startPolling() {
   // spotted). startPolling retries internally, so it needs no await.
   startPolling().catch((err) => console.error('polling failed:', err.message));
 
-  const priceCron = process.env.PRICE_CRON || '*/30 * * * *';
+  const priceCron = process.env.PRICE_CRON || DEFAULT_PRICE_CRON;
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
 
   cron.schedule(priceCron, () => {

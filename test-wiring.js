@@ -306,6 +306,30 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...and no startup warning mentions a removed provider', !/OMKAR/.test(server));
   check('the startup banner warns when the check schedule would exhaust the API quota',
     /PRICE_CRON is \"/.test(server) && /1,000/.test(server));
+  // ...and the warning actually FIRES. The previous assertion only grepped the
+  // source for the pattern, so it passed while the matcher was dead: the regex
+  // had a doubled backslash and never matched anything.
+  {
+    const m = server.match(/function tooFrequent[\s\S]*?\n}/);
+    check('the frequency matcher exists', !!m);
+    if (m) {
+      eval(m[0].replace(/^function /, 'var tooFrequent = function '));
+      check('a 30-minute schedule is flagged', tooFrequent('*/30 * * * *') === true);
+      check('an every-minute schedule is flagged', tooFrequent('* * * * *') === true);
+      check('a 5-minute schedule is flagged', tooFrequent('*/5 * * * *') === true);
+      check('a 6-hourly schedule is NOT flagged', tooFrequent('0 */6 * * *') === false);
+      check('a 2-hourly schedule is NOT flagged', tooFrequent('0 */2 * * *') === false);
+      check('a daily schedule is NOT flagged', tooFrequent('0 0 * * *') === false);
+    }
+    // And the DEFAULT is not the very thing the warning exists to catch.
+    const def = /const DEFAULT_PRICE_CRON = '([^']+)'/.exec(server);
+    check('the default schedule is defined once', !!def);
+    check('...and the default is not a quota-burning schedule',
+      def && tooFrequent(def[1]) === false, def ? def[1] : 'missing');
+    check('...and the scheduler uses that same default',
+      !/process\.env\.PRICE_CRON \|\| '\*\/30/.test(server) &&
+      (server.match(/process\.env\.PRICE_CRON \|\| DEFAULT_PRICE_CRON/g) || []).length >= 2);
+  }
   check('the startup banner says which scraper is in play',
     /Scraper: Oxylabs Web API key set/.test(server));
   check('...and names the missing credentials when there are none',

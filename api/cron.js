@@ -52,6 +52,10 @@ const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCE
 // recorded and shown. A 4.5% flip to ₹22,999 did too. The false moves are small
 // percentages, so the gate has to be small as well. A confirmation costs one
 // extra lookup, and only when the price has actually moved.
+// An identical alert is suppressed for this long. Long enough to swallow a
+// double cron run, short enough that a genuine repeat a few hours later still
+// reaches the user.
+const ALERT_COOLDOWN_MINUTES = parseInt(process.env.ALERT_COOLDOWN_MINUTES || '180', 10);
 const CONFIRM_THRESHOLD = parseFloat(process.env.PRICE_CONFIRM_THRESHOLD_PERCENT || '3');
 const HISTORY_DAYS = 30;
 // The history sanity pass runs by itself, once a day, so a polluted history is
@@ -88,6 +92,23 @@ function alertKeyboard(docId, product) {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * What makes two alerts "the same alert".
+ *
+ * The header and the price, with the markup and the emoji stripped: the emoji is
+ * the stock state, and a restock alert flipping from 🟢 to 🔴 is a different
+ * event, not a repeat. The name is deliberately NOT part of the identity — a
+ * title that gains a word between runs must not defeat the cooldown.
+ */
+function alertIdentity(text) {
+  const t = String(text || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t.slice(0, 200);
+}
 
 /**
  * Send one alert. Retries transient failures so a single blip — a network
@@ -146,54 +167,54 @@ function titleLooksUnusable(title, productId) {
 function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow) {
   const name = product.title ? String(product.title).slice(0, 80) : product.productId;
 
-  // No raw URL in the body.
+  // ── THE LAYOUT ────────────────────────────────────────────────────────────
+  //   🟢 BACK IN STOCK ALERT
+  //   ───────────────────
   //
-  // Every alert is sent with alertKeyboard(), whose "Buy Now" button carries
-  // exactly the same url (product.affiliateUrl || product.cleanUrl). Printing it
-  // again as bare text underneath only made the message read as clutter. The
-  // button is the link — and it is a proper button, so it survives being tapped
-  // on a phone.
+  //   realme P4 5G (Steel Grey, 128 GB) (6 GB RAM)
   //
-  // The one case where the body WOULD need it is when there is no url at all,
-  // and then the button is absent too and there is nothing to print. So there is
-  // no configuration in which this leaves the user unable to reach the product.
-  const tail = '';
-
-  // A clear header, then the stock status on its own bold line. The status was
-  // buried in small text, so users read a price and assumed it was a live deal.
+  //   💰 Current Price: ₹25999
+  //
+  // The title and the price each sit in their own BLOCKQUOTE. That is what gives
+  // the message its air: Telegram draws a rule down the side and indents the
+  // text, so the name reads as a quotation rather than as one more line of
+  // running text. The emoji is the stock state — 🟢 in stock, 🔴 out of stock —
+  // and the header says what actually happened.
+  //
+  // No raw URL in the body. Every alert is sent with alertKeyboard(), whose
+  // "Buy Now" button carries the same url, and printing it again underneath only
+  // made the message read as clutter. The button IS the link.
   const HEAD = {
-    drop: '📉 <b>PRICE DROP ALERT</b>',
-    rise: '📈 <b>PRICE INCREASE ALERT</b>',
-    restock: '📦 <b>BACK IN STOCK ALERT</b>',
+    drop: 'PRICE DROP ALERT',
+    rise: 'PRICE INCREASE ALERT',
+    restock: 'BACK IN STOCK ALERT',
+    outofstock: 'OUT OF STOCK ALERT',
   };
-  const status =
-    inStockNow === false ? '🔴 <b>STATUS: OUT OF STOCK</b>' : '🟢 <b>STATUS: IN STOCK</b>';
-  const top = (HEAD[kind] || HEAD.drop) + '\n━━━━━━━━━━━━━━━━━━━\n' + status + '\n\n📱 <b>Product:</b> ' + name;
+  // 🟢 when the product is in stock, 🔴 when it is not. The header and the emoji
+  // always agree, because a red dot beside "BACK IN STOCK" is worse than no
+  // emoji at all.
+  const inStock = inStockNow !== false;
+  const dot = inStock ? '🟢' : '🔴';
+
+  const line = (text) => '<blockquote>' + text + '</blockquote>';
+
+  const parts = [dot + ' <b>' + (HEAD[kind] || HEAD.drop) + '</b>', '───────────────────', '', line(name), ''];
 
   if (kind === 'restock') {
-    return (
-      top +
-      '\nPreviously Out of Stock' +
-      (newPrice != null ? '\n💰 <b>Current Price:</b> ₹' + newPrice : '') +
-      tail
-    );
+    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
+  } else if (kind === 'outofstock') {
+    if (oldPrice != null) parts.push(line('💸 Last Known Price: ₹' + oldPrice));
+  } else if (kind === 'rise') {
+    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
+    if (oldPrice != null) parts.push(line('❌ Previous Price: ₹' + oldPrice));
+    if (pct != null) parts.push(line('▲ ' + Math.abs(pct).toFixed(1) + '%'));
+  } else {
+    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
+    if (oldPrice != null) parts.push(line('❌ Previous Price: ₹' + oldPrice));
+    if (pct != null) parts.push(line('▼ ' + Math.abs(pct).toFixed(1) + '%'));
   }
-  if (kind === 'rise') {
-    return (
-      top +
-      '\n💰 <b>Current Price:</b> ₹' + newPrice +
-      '\n❌ <b>Previous Price:</b> ₹' + oldPrice +
-      '\n(+' + Math.abs(pct).toFixed(1) + '%)' +
-      tail
-    );
-  }
-  return (
-    top +
-    '\n💰 <b>Current Price:</b> ₹' + newPrice +
-    '\n❌ <b>Previous Price:</b> ₹' + oldPrice +
-    '\n(' + pct.toFixed(1) + '%)' +
-    tail
-  );
+
+  return parts.join('\n');
 }
 
 async function pruneOldHistory(docRef) {
@@ -605,7 +626,51 @@ async function processProduct(doc) {
     message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'restock', true);
   }
 
+  // ...and the other direction. A product going OUT of stock is news too — it
+  // tells a watcher that the price they are holding out for is gone for now.
+  // Only on the transition, same as restock.
+  if (!wasOutOfStock && result.inStock === false) {
+    message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'outofstock', false);
+  }
+
+  // ── COOLDOWN ─────────────────────────────────────────────────────────────
+  // The same alert must not go out twice in quick succession.
+  //
+  // The screenshots showed exactly that: "BACK IN STOCK ALERT" delivered at
+  // 11:57 and again at 11:58, identical. Two cron runs a minute apart — or one
+  // run that re-read the same page — each decided the transition had happened.
+  // To the user that is spam, and it is the kind that makes a bot feel broken.
+  //
+  // So the alert's identity (its kind plus the price it carries) is remembered
+  // on the product, and an identical one is suppressed inside the window. A
+  // genuinely different alert — a new price, or a different kind — is NOT held
+  // back, because that is new information.
   if (message) {
+    const alertKey = alertIdentity(message);
+    const lastKey = data.lastAlertKey || null;
+    const lastAt =
+      data.lastAlertAt && data.lastAlertAt.toMillis ? data.lastAlertAt.toMillis() : null;
+    const cooldownMs = ALERT_COOLDOWN_MINUTES * 60 * 1000;
+    if (lastKey === alertKey && lastAt != null && Date.now() - lastAt < cooldownMs) {
+      const waited = Math.round((Date.now() - lastAt) / 1000);
+      console.log(
+        'cron: ' + doc.id + ' — suppressing a repeat alert (same as ' + waited +
+          's ago, cooldown ' + ALERT_COOLDOWN_MINUTES + 'm)'
+      );
+      message = null;
+    }
+  }
+
+  if (message) {
+    // Remember what was sent, so the next run can tell a repeat from news.
+    try {
+      await doc.ref.set(
+        { lastAlertKey: alertIdentity(message), lastAlertAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    } catch (err) {
+      console.warn('cron: could not record the alert identity for ' + doc.id + ' (' + err.message + ')');
+    }
     let first = true;
     for (const chatId of subscribers) {
       // A small gap between recipients keeps us clear of Telegram's per-second

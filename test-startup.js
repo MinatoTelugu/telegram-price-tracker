@@ -79,8 +79,20 @@ check('a rise alert is NOT gated on stock state',
     !/!outOfStockNow && pct != null && pct >= INCREASE_THRESHOLD/.test(cron));
 check('a drop alert IS still gated on stock state',
   /!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD/.test(cron));
-check('the alert carries a bold in-stock status line', cron.includes('STATUS: IN STOCK'));
-check('the alert carries a bold out-of-stock status line', cron.includes('STATUS: OUT OF STOCK'));
+// The status is no longer a separate "STATUS: IN STOCK" line. The dot IS the
+// status, and the header says what happened — so the two can never disagree.
+check('the dot is green in stock and red out of stock',
+  /inStock \? '🟢' : '🔴'/.test(cron));
+check('the header is chosen from the event, not hardcoded',
+  /restock: 'BACK IN STOCK ALERT'/.test(cron) && /outofstock: 'OUT OF STOCK ALERT'/.test(cron));
+check('a product going out of stock raises its own alert',
+  /!wasOutOfStock && result\.inStock === false/.test(cron));
+check('the title and the price are each quoted in a blockquote',
+  /const line = \(text\) => '<blockquote>'/.test(cron) && /line\(name\)/.test(cron));
+check('an identical alert is suppressed inside a cooldown window',
+  /ALERT_COOLDOWN_MINUTES/.test(cron) && /suppressing a repeat alert/.test(cron));
+check('...and the cooldown remembers what was sent',
+  /lastAlertKey: alertIdentity\(message\)/.test(cron));
 check('the alert has a price-drop header', cron.includes('PRICE DROP ALERT'));
 check('the alert has a back-in-stock header', cron.includes('BACK IN STOCK ALERT'));
 

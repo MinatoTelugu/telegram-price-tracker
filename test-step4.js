@@ -170,9 +170,26 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
     'restock alert says "BACK IN STOCK ALERT"',
     calls.messages.some((m) => String(m.text).includes('BACK IN STOCK ALERT'))
   );
+  // The header IS the statement now — "BACK IN STOCK ALERT" — so the old
+  // "Previously Out of Stock" line is gone rather than repeated underneath it.
   check(
-    'restock alert mentions it was previously out of stock',
-    calls.messages.some((m) => String(m.text).includes('Previously Out of Stock'))
+    'the restock header says what happened',
+    calls.messages.some((m) => String(m.text).includes('BACK IN STOCK ALERT'))
+  );
+  check(
+    'the restock alert uses the green dot for in stock',
+    calls.messages.some((m) => String(m.text).startsWith('🟢'))
+  );
+  check(
+    'the title and the price are each in their own blockquote',
+    calls.messages.some((m) => {
+      const t = String(m.text);
+      return (t.match(/<blockquote>/g) || []).length >= 2 && /<blockquote>[^<]*Current Price/.test(t);
+    })
+  );
+  check(
+    'the alert carries no raw url in the body',
+    calls.messages.every((m) => !/https?:\/\//.test(String(m.text).split('<blockquote>')[0] || ''))
   );
   check('product doc records the new stock state', calls.sets.some((s) => s.d.inStock === true));
 

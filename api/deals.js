@@ -87,11 +87,29 @@ function buildCaption(deal, link) {
   // The one case where the text would need it is when there is no link at all,
   // and then there is no button either and nothing to print.
   void link;
-  const lines = ['🔥 <b>' + deal.discount + '% OFF</b>', '', '<b>' + escapeHtml(deal.title) + '</b>', ''];
+  // ── THE POST ──────────────────────────────────────────────────────────────
+  //   🔥 54% OFF
+  //   ───────────────────
+  //
+  //   Printed Georgette Stitched Flared/A-line Gown
+  //
+  //   💰 ₹375  ₹1,299
+  //
+  // The same shape as the alerts: a header, a rule, then the name and the price
+  // each in their own blockquote. Telegram indents a blockquote and draws a rule
+  // down its side, which is what gives the post its air — the name reads as a
+  // quotation rather than one more line of running text.
+  const lines = [
+    '🔥 <b>' + deal.discount + '% OFF</b>',
+    '───────────────────',
+    '',
+    '<blockquote>' + escapeHtml(deal.title) + '</blockquote>',
+    '',
+  ];
   if (deal.price != null && deal.mrp != null) {
-    lines.push('💰 <b>' + money(deal.price) + '</b>  <s>' + money(deal.mrp) + '</s>');
+    lines.push('<blockquote>💰 <b>' + money(deal.price) + '</b>  <s>' + money(deal.mrp) + '</s></blockquote>');
   } else if (deal.price != null) {
-    lines.push('💰 <b>' + money(deal.price) + '</b>');
+    lines.push('<blockquote>💰 <b>' + money(deal.price) + '</b></blockquote>');
   }
   return lines.join('\n');
 }
@@ -434,7 +452,30 @@ module.exports = async (req, res) => {
     }
 
     const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4 });
-    const deals = scan.deals;
+
+    // FASHION ONLY.
+    //
+    // Flipkart's "top offers" page is not a fashion page — it is whatever is
+    // discounted, which the log showed arriving as makeup, mobile listings and
+    // home appliances alongside the clothing. A channel that posts an assortment
+    // reads as a spam feed. This drops everything that is not clothing,
+    // footwear, bags or accessories BEFORE anything else looks at it.
+    const fashion = require('../lib/deals').fashionCheck;
+    const rejected = [];
+    const deals = scan.deals.filter((d) => {
+      const verdict = fashion(d.title);
+      if (!verdict.ok) {
+        rejected.push({ title: String(d.title).slice(0, 60), why: verdict.reason });
+        return false;
+      }
+      return true;
+    });
+    if (rejected.length) {
+      console.log(
+        'deals: fashion filter dropped ' + rejected.length + ' of ' + scan.deals.length +
+          ' — e.g. ' + rejected.slice(0, 3).map((r) => r.title + ' (' + r.why + ')').join('; ')
+      );
+    }
 
     // Per-source detail, so a silent 0 is never a mystery again.
     for (const src of scan.sources) {

@@ -2,14 +2,14 @@
 const Module = require('module');
 
 const cardA =
-  '<div class="_75nlfW"><a class="CGtC98" href="/foo/p/itmaaaaaaaaaaaa?pid=AAAA1111" title="Test Deal A">' +
+  '<div class="_75nlfW"><a class="CGtC98" href="/foo/p/itmaaaaaaaaaaaa?pid=AAAA1111" title="Printed Georgette Stitched Flared Gown">' +
   '<img class="DByuf4" src="https://img.example/a.jpg"/></a>' +
-  '<div class="KzDlHZ">Test Deal A</div><div class="Nx9bqj _4b5DiR">\u20B9459</div>' +
+  '<div class="KzDlHZ">Printed Georgette Stitched Flared Gown</div><div class="Nx9bqj _4b5DiR">\u20B9459</div>' +
   '<div class="yRaY8j">\u20B9999</div></div>';
 const cardB =
-  '<div class="_75nlfW"><a class="CGtC98" href="/bar/p/itmbbbbbbbbbb?pid=BBBB2222" title="Test Deal B">' +
+  '<div class="_75nlfW"><a class="CGtC98" href="/bar/p/itmbbbbbbbbbb?pid=BBBB2222" title="Levis Mens Slim Fit Jeans">' +
   '<img class="DByuf4" src="https://img.example/b.jpg"/></a>' +
-  '<div class="KzDlHZ">Test Deal B</div><div class="Nx9bqj _4b5DiR">\u20B91,059</div>' +
+  '<div class="KzDlHZ">Levis Mens Slim Fit Jeans</div><div class="Nx9bqj _4b5DiR">\u20B91,059</div>' +
   '<div class="yRaY8j">\u20B91,349</div><div class="UkUFwK">21% off</div></div>';
 const HTML = '<html><body>' + cardA + cardB + '</body></html>';
 
@@ -63,7 +63,7 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   const deals = await discoverDeals({ minDiscount: 50 });
   check('only the >=50% deal is returned', deals.length === 1);
   check('discount computed from price/MRP', deals[0] && deals[0].discount === 54);
-  check('title parsed', deals[0] && deals[0].title === 'Test Deal A');
+  check('title parsed', deals[0] && deals[0].title === 'Printed Georgette Stitched Flared Gown');
   check('url parsed', deals[0] && deals[0].url === 'https://www.flipkart.com/foo/p/itmaaaaaaaaaaaa');
   check('image parsed', deals[0] && deals[0].imageUrl === 'https://img.example/a.jpg');
 
@@ -99,7 +99,7 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
       /itmaaaaaaaaaaaa|flipkart/.test(JSON.stringify(c.body.reply_markup))));
   check('the caption is text only, with no duplicated raw URL',
     calls.every((c) => !c.body || !c.body.caption || !/https?:\/\//.test(String(c.body.caption))));
-  check('caption carries title and price', calls.some((c) => c.body && String(c.body.caption).includes('Test Deal A') && String(c.body.caption).includes('459')));
+  check('caption carries title and price', calls.some((c) => c.body && String(c.body.caption).includes('Printed Georgette Stitched Flared Gown') && String(c.body.caption).includes('459')));
 
   // 4. second run skips the already-posted deal
   calls.length = 0;
@@ -249,6 +249,51 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   check('no trailing rating reaches a caption',
     !/ratin/i.test(deals.cleanDealTitle('Add to CompareApple iPhone 17 (Black, 256 GB)4.628,706 Ratin') || ''));
   check('an empty title yields null', deals.cleanDealTitle('') === null);
+}
+
+
+// ---------------------------------------------------------------------------
+// The channel is a FASHION channel. Flipkart's "top offers" page is not, and
+// the log showed makeup, mobiles and appliances arriving alongside the clothing.
+// ---------------------------------------------------------------------------
+{
+  const deals = require('./lib/deals');
+  const POST = [
+    'Casual Regular Sleeves Embroidered Women Black Top',
+    'Printed Georgette Stitched Flared/A-line Gown',
+    'Nike Revolution Running Shoes',
+    'Levis Mens Slim Fit Jeans',
+    'Banarasi Silk Saree',
+    'Wildcraft Backpack 30L',
+    'Pack of 3 Printed Men Trunk',
+    'Mens Slim Fit Casual Shirt',
+    'Womens High Rise Skinny Jeans',
+    'Puma Unisex Sneakers',
+    'Womens Dresses',
+    'Mens Formal Shoes',
+  ];
+  const SKIP = [
+    ['Maybelline Matte Lipstick Red', 'makeup'],
+    ['Prestige Mixer Grinder 750W', 'appliance'],
+    ['Samsung Galaxy M17 5G Mobile', 'mobile'],
+    ['Boat Airdopes 141 Bluetooth Earbuds', 'earbuds'],
+    ['Godrej 190L Refrigerator', 'appliance'],
+    ['Milton Water Bottle 1L', 'bottle'],
+    ['Wipro Garnet Smart Bulb', 'not fashion'],
+    ['Classmate Notebook Pack', 'stationery'],
+    ['Bournvita Health Drink', 'grocery'],
+    ['Tata Salt 1kg', 'grocery'],
+  ];
+  for (const t of POST) {
+    check('fashion: POST ' + t.slice(0, 34), deals.fashionCheck(t).ok === true, JSON.stringify(deals.fashionCheck(t)));
+  }
+  for (const [t, why] of SKIP) {
+    const v = deals.fashionCheck(t);
+    check('fashion: SKIP ' + t.slice(0, 34) + ' (' + why + ')', v.ok === false, JSON.stringify(v));
+  }
+  check('an empty title is never posted', deals.fashionCheck('').ok === false);
+  check('a phone is blocked even though "mobile" appears in no allowlist word',
+    deals.fashionCheck('Apple iPhone 17 (Black, 256 GB)').ok === false);
 }
 
 

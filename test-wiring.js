@@ -534,6 +534,34 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     /NO channel-join lock or force-subscribe/.test(env));
 }
 
+// --- the deals caption must not repeat the link either -----------------------
+// The channel post carried the affiliate link as bare text underneath the title,
+// with the same url already on the "Buy Now" button right below it.
+{
+  const deals = fs.readFileSync(__dirname + '/api/deals.js', 'utf8');
+  const fn = deals.match(/function buildCaption\([\s\S]*?\n\}/)[0];
+  check('the caption no longer prints the link', !/lines\.push\('', '🔗 ' \+ link\)/.test(fn));
+  check('...and says why', /carried by the "🛒 Buy Now" button/.test(fn));
+
+  // Exercise it.
+  eval(deals.match(/function escapeHtml\([\s\S]*?\n\}/)[0]);
+  eval(deals.match(/function money\([\s\S]*?\n\}/)[0]);
+  eval(fn);
+  const out = buildCaption(
+    { discount: 82, title: 'Bracelet Making Kit/Set DIY Jewelry Making Kit', price: 199, mrp: 1099 },
+    'https://fkrt.clnk.in/DiUG'
+  );
+  check('the caption has no url in it', !/https?:\/\//.test(out));
+  check('the caption keeps the title', out.includes('Bracelet Making Kit'));
+  check('the caption keeps the price', out.includes('199'));
+  check('the caption keeps the discount', out.includes('82%'));
+
+  // ...and the buttons are untouched: the url lives there.
+  check('the Buy Now button still carries the link', /\{ text: '🛒 Buy Now', url: link \}/.test(deals));
+  check("the More Deals button is still there", /\{ text: '🔥 More Deals', url: CHANNEL_URL \}/.test(deals));
+  check('both posts still attach the keyboard', (deals.match(/reply_markup/g) || []).length >= 2);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

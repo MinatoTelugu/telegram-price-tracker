@@ -82,13 +82,19 @@ function money(n) {
 }
 
 function buildCaption(deal, link) {
+  // `link` is deliberately NOT printed. It is carried by the "🛒 Buy Now" button
+  // in reply_markup, built from the same value, so printing it again as bare text
+  // only made the post read as clutter. Same reasoning as the price alerts.
+  //
+  // The one case where the text would need it is when there is no link at all,
+  // and then there is no button either and nothing to print.
+  void link;
   const lines = ['🔥 <b>' + deal.discount + '% OFF</b>', '', '<b>' + escapeHtml(deal.title) + '</b>', ''];
   if (deal.price != null && deal.mrp != null) {
     lines.push('💰 <b>' + money(deal.price) + '</b>  <s>' + money(deal.mrp) + '</s>');
   } else if (deal.price != null) {
     lines.push('💰 <b>' + money(deal.price) + '</b>');
   }
-  lines.push('', '🔗 ' + link);
   return lines.join('\n');
 }
 

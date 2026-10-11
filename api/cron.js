@@ -451,10 +451,13 @@ async function processProduct(doc) {
   // the write is fragile — the snapshot may already reflect the new value.
   const wasOutOfStock = data.inStock === false;
 
-  // Append the history point — but never a guessed one.
+  // Append the history point — but never a guessed one. The SOURCE is recorded
+  // with it, so a later run can tell a reading we stood behind from one we did
+  // not, and so a rise can be judged against a baseline worth trusting.
   if (!result.guess) {
     await doc.ref.collection(COLLECTIONS.PRICE_HISTORY).add({
       price: newPrice,
+      src: result.priceKind || null,
       currency: result.currency || 'INR',
       checkedAt: FieldValue.serverTimestamp(),
     });
@@ -462,6 +465,7 @@ async function processProduct(doc) {
 
   const update = {
     lastPrice: newPrice,
+    lastPriceSource: result.priceKind || null,
     currency: result.currency || 'INR',
     lastCheckedAt: FieldValue.serverTimestamp(),
     lastCheckError: null,
@@ -566,11 +570,34 @@ async function processProduct(doc) {
   // false alarm, and suppressing it too (an earlier version did) meant an
   // out-of-stock item produced NO alerts of any kind, which is indistinguishable
   // from the bot being broken.
+  // A RISE NEEDS A BASELINE WE CAN VOUCH FOR.
+  //
+  // The reported product sent "PRICE INCREASE ALERT +10%" and "+15%" for a price
+  // that had not changed: the stored figure was ₹19,999, left there by a text
+  // scan that had picked the wrong figure, so every correct reading after it
+  // looked like a rise. An alert is only meaningful if the number it is measured
+  // AGAINST is real.
+  //
+  // So the previous reading must have come from a source that states the price.
+  // Readings recorded before the source was tracked carry none, and are treated
+  // as unverified — a rise against one is not sent. A DROP is unaffected: it is
+  // the alert people actually want, and the out-of-stock guard above already
+  // covers the case where a drop is an artifact.
+  const VERIFIED = new Set(['labelled', 'mrp-anchored', 'api', 'page']);
+  const baselineVerified = VERIFIED.has(data.lastPriceSource);
+
   let message = null;
   if (!outOfStockNow && pct != null && pct <= -DROP_THRESHOLD) {
     message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'drop', result.inStock);
   } else if (pct != null && pct >= INCREASE_THRESHOLD) {
-    message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise', result.inStock);
+    if (baselineVerified) {
+      message = formatAlert(alertProduct, oldPrice, newPrice, pct, 'rise', result.inStock);
+    } else {
+      console.log(
+        'cron: ' + doc.id + ' — suppressing a +' + pct.toFixed(1) +
+          '% rise alert: the stored ' + oldPrice + ' came from a source we cannot vouch for'
+      );
+    }
   }
 
   // Only on the TRANSITION, so we don't repeat it every run.

@@ -595,6 +595,34 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// Buy-box isolation is global, and a rise needs a baseline worth trusting.
+// ---------------------------------------------------------------------------
+{
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the price is read through the buy-box-aware reader',
+    /parsePrice\(firstBuyboxText\(\$, cfg\.price\)\)/.test(scr));
+  check('the reader skips related-products blocks',
+    /function isInRelatedBlock/.test(scr) && /closest\(RELATED_SELECTOR\)/.test(scr));
+  check('no unscoped Amazon price selector is left',
+    !/^\s*'span\.a-price-whole',/m.test(scr) && !/^\s*'\.a-price \.a-offscreen',/m.test(scr));
+  check('carousels, similar rows and sponsored blocks are all covered',
+    /id\*="similar"/.test(scr) && /data-a-carousel/.test(scr) && /class\*="sponsored"/.test(scr));
+
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the source of every reading is recorded',
+    /src: result\.priceKind \|\| null/.test(cron));
+  check('...and on the product, as the alert baseline',
+    /lastPriceSource: result\.priceKind \|\| null/.test(cron));
+  check('a rise alert requires a verified baseline',
+    /baselineVerified/.test(cron) && /VERIFIED\.has\(data\.lastPriceSource\)/.test(cron));
+  check('...and an unverified one is suppressed with a log',
+    /suppressing a \+/.test(cron));
+  check('a drop is NOT gated on the baseline',
+    /pct <= -DROP_THRESHOLD\) \{\s*message = formatAlert/.test(cron));
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

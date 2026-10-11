@@ -12,7 +12,10 @@ function makeProductDoc(id, data) {
       where: () => ({ limit: () => ({ get: async () => ({ empty: true, docs: [], size: 0 }) }) }),
     }),
   };
-  return { id, data: () => store, ref };
+  // data() returns a SNAPSHOT, as Firestore does. Returning the live store
+  // object let a set() during the run be visible to code that had already read
+  // data() — which is not how the real thing behaves, and hid an ordering bug.
+  return { id, data: () => Object.assign({}, store), ref };
 }
 
 let productDocs = [];
@@ -92,15 +95,47 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
 
   // 3. price RISE -> increase alert (rises now alert too)
   calls.messages.length = 0;
-  scrapeResult = { ok: true, price: 1500, currency: 'INR', title: 'Test Item', imageUrl: null };
+  scrapeResult = { ok: true, price: 1500, currency: 'INR', title: 'Test Item', imageUrl: null, priceKind: 'mrp-anchored' };
   productDocs = [makeProductDoc('amazon_B0TEST', {
     marketplace: 'amazon', cleanUrl: 'https://www.amazon.in/dp/B0TEST', lastPrice: 1000,
+    lastPriceSource: 'mrp-anchored',
     subscribers: ['111'], title: 'Test Item', active: true, lastCheckedAt: null,
   })];
   res = fakeRes();
   await handler({ method: 'GET', headers: { authorization: 'Bearer sekret' }, query: {} }, res);
   check('price rise -> increase alert', JSON.parse(res.body).alertsSent === 1);
   check('increase alert says "PRICE INCREASE ALERT"', calls.messages.some((m) => String(m.text).includes('PRICE INCREASE ALERT')));
+
+  // 3b. the SAME rise, but the stored price came from a source we cannot vouch
+  // for (or from before sources were recorded). The reported product sent "+10%"
+  // and "+15%" alerts for a price that had not moved, because the baseline was a
+  // figure a text scan had guessed. An alert measured against that is noise.
+  calls.messages.length = 0;
+  scrapeResult = { ok: true, price: 1500, currency: 'INR', title: 'Test Item', imageUrl: null, priceKind: 'mrp-anchored' };
+  productDocs = [makeProductDoc('amazon_B0TEST', {
+    marketplace: 'amazon', cleanUrl: 'https://www.amazon.in/dp/B0TEST', lastPrice: 1000,
+    subscribers: ['111'], title: 'Test Item', active: true, lastCheckedAt: null,
+  })];
+  res = fakeRes();
+  await handler({ method: 'GET', headers: { authorization: 'Bearer sekret' }, query: {} }, res);
+  check('a rise against an unverified baseline sends NO alert',
+    JSON.parse(res.body).alertsSent === 0);
+  check('...and none says PRICE INCREASE ALERT',
+    !calls.messages.some((m) => String(m.text).includes('PRICE INCREASE ALERT')));
+  check('...but the new price is still recorded',
+    calls.sets.some((s) => s.d.lastPrice === 1500));
+
+  // 3c. a DROP is not gated on the baseline: it is the alert people want.
+  calls.messages.length = 0;
+  scrapeResult = { ok: true, price: 700, currency: 'INR', title: 'Test Item', imageUrl: null, priceKind: 'mrp-anchored' };
+  productDocs = [makeProductDoc('amazon_B0TEST', {
+    marketplace: 'amazon', cleanUrl: 'https://www.amazon.in/dp/B0TEST', lastPrice: 1000,
+    subscribers: ['111'], title: 'Test Item', active: true, lastCheckedAt: null,
+  })];
+  res = fakeRes();
+  await handler({ method: 'GET', headers: { authorization: 'Bearer sekret' }, query: {} }, res);
+  check('a drop against an unverified baseline still alerts',
+    JSON.parse(res.body).alertsSent === 1);
 
   // 4. blocked page -> skipped, error recorded
   calls.sets.length = 0;

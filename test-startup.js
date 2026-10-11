@@ -87,6 +87,17 @@ check('the header is chosen from the event, not hardcoded',
   /restock: 'BACK IN STOCK ALERT'/.test(cron) && /outofstock: 'OUT OF STOCK ALERT'/.test(cron));
 check('a product going out of stock raises its own alert',
   /!wasOutOfStock && result\.inStock === false/.test(cron));
+// ...but only when the product was actually READ. The reported alert went out for
+// an item Amazon showed at ₹22,499 In stock, and it carried no price at all.
+check('the out-of-stock alert is gated on a real reading',
+  /const readReliably = result\.price != null && !result\.guess/.test(cron));
+check('...and a stock state with no price is refused, with a log line',
+  /suppressing an OUT OF STOCK alert/.test(cron));
+check('the scraper no longer decides stock from a whole-page scan', (() => {
+  const src = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  const body = src.slice(src.indexOf('function detectOutOfStock'), src.indexOf('function priceFromTextMatch'));
+  return !/\$\('body'\)\.text\(\)/.test(body) && /return false;/.test(body);
+})());
 check('the title and the price are each quoted in a blockquote',
   /const line = \(text\) => '<blockquote>'/.test(cron) && /line\(name\)/.test(cron));
 check('an identical alert is suppressed inside a cooldown window',
@@ -97,7 +108,7 @@ check('the alert has a price-drop header', cron.includes('PRICE DROP ALERT'));
 check('the alert has a back-in-stock header', cron.includes('BACK IN STOCK ALERT'));
 
 const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
-check('the stock check reads the whole page', /\$\('body'\)\.text\(\)\.replace\(\/\\s\+\/g, ' '\)\.toLowerCase\(\)/.test(scr));
+// The whole-page stock scan was REMOVED — a variant row saying "Currently\n// unavailable" marked the whole listing out of stock. That was the reported bug.\ncheck('the stock check does NOT read the whole page', !/\$\('body'\)\.text\(\)/.test(scr));\ncheck('the stock check is decided by the buy box', /#availability/.test(scr) && /buyboxSaysOut/.test(scr));
 check('the stock check treats "Notify Me" as out of stock', scr.includes("'notify me'"));
 check('the rupee fallback skips exchange/EMI figures', scr.includes('firstRealPrice'));
 

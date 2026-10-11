@@ -629,8 +629,29 @@ async function processProduct(doc) {
   // ...and the other direction. A product going OUT of stock is news too — it
   // tells a watcher that the price they are holding out for is gone for now.
   // Only on the transition, same as restock.
+  //
+  // BUT ONLY WHEN WE ACTUALLY READ THE PRODUCT.
+  //
+  // The reported alert went out for an item Amazon showed at ₹22,499, In stock,
+  // and it carried no price at all — the tell that nothing was really read. An
+  // out-of-stock verdict is the one alert that costs the user something if it is
+  // wrong: they stop waiting for a price that is right there. So it needs
+  // corroboration, not just a flag:
+  //   - we must have a price (a page that yielded nothing has not been read),
+  //   - and we must have seen the product IN stock before, which the transition
+  //     already requires.
+  // A restock alert has no such risk, and a price alert needs a price by
+  // definition, so neither is gated this way.
+  const readReliably = result.price != null && !result.guess;
   if (!wasOutOfStock && result.inStock === false) {
-    message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'outofstock', false);
+    if (readReliably) {
+      message = formatAlert(alertProduct, oldPrice, newPrice, 0, 'outofstock', false);
+    } else {
+      console.log(
+        'cron: ' + doc.id + ' — suppressing an OUT OF STOCK alert: the reading came ' +
+          'with no usable price, so the stock state is not trustworthy'
+      );
+    }
   }
 
   // ── COOLDOWN ─────────────────────────────────────────────────────────────

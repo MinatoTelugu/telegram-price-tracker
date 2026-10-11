@@ -424,9 +424,23 @@ async function post(text, id) {
     scraper.detectOutOfStock(cheerio.load('<html><body>Sold Out</body></html>')) === false);
   check('...but the buy box saying so IS',
     scraper.detectOutOfStock(cheerio.load('<html><body><div id="availability">Currently out of stock.</div></body></html>')) === true);
-  check('...and an unambiguous whole-page statement is still honoured',
-    scraper.detectOutOfStock(cheerio.load('<html><body><p>Currently unavailable.</p></body></html>')) === true);
-  check('detects "Currently Out of Stock"', scraper.detectOutOfStock(cheerio.load('<html><body>Currently Out of Stock</body></html>')) === true);
+  // The whole-page fallback was REMOVED, and this is why: a product page carries a
+  // variant picker, and an unavailable VARIANT states "Currently unavailable" in
+  // its own row. A body scan cannot tell that row from the product's own status,
+  // so an out-of-stock colourway marked the whole listing out of stock — which is
+  // exactly the false OUT OF STOCK ALERT that was reported.
+  check('a whole-page phrase alone is NOT enough (a variant row can say it)',
+    scraper.detectOutOfStock(cheerio.load('<html><body><p>Currently unavailable.</p></body></html>')) === false);
+  check('...and a variant row cannot override the buy box',
+    scraper.detectOutOfStock(cheerio.load(
+      '<html><body><div id="variation"><span>Midnight Black</span><span>Currently unavailable</span></div>' +
+      '<div id="availability">In stock</div></body></html>'
+    )) === false);
+  check('...while the buy box itself still decides',
+    scraper.detectOutOfStock(cheerio.load('<html><body><div id="availability">Currently out of stock</div></body></html>')) === true);
+  // The phrase must be in the BUY AREA, not merely somewhere on the page.
+  check('detects "Currently Out of Stock" in the buy box', scraper.detectOutOfStock(cheerio.load('<html><body><div id="availability">Currently Out of Stock</div></body></html>')) === true);
+  check('...but the same words in a variant row are ignored', scraper.detectOutOfStock(cheerio.load('<html><body><span>Currently Out of Stock</span></body></html>')) === false);
   check('an in-stock page is not flagged', scraper.detectOutOfStock(cheerio.load('<html><body>Add to cart Buy Now</body></html>')) === false);
 
   // 16. /broadcast — admin only, with a completion report

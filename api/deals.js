@@ -7,7 +7,7 @@
  *   1. scrapes Flipkart listing pages for products discounted past a threshold
  *   2. skips anything already posted recently (tracked in Firestore)
  *   3. builds the affiliate link (Amazon tagged; Flipkart plain for now)
- *   4. shortens it with Bitly (BITLY_ACCESS_TOKEN)
+ *   4. posts the affiliate link directly (the Bitly shortener was removed)
  *   5. posts image + title + price + link to the channel
  *
  * Auth matches api/cron.js: Vercel sends "Authorization: Bearer $CRON_SECRET".
@@ -17,7 +17,6 @@
  *   BOT_TOKEN              -> to post to the channel
  *   CHANNEL_ID             -> channel chat id (default -1004386388150)
  *                             (DEALS_CHANNEL_ID / TELEGRAM_CHANNEL_ID still accepted)
- *   BITLY_ACCESS_TOKEN     -> Bitly v4 token
  *   MIN_DISCOUNT / DEALS_MIN_DISCOUNT -> threshold % (default 20)
  *   ?minDiscount=NN        -> per-run override
  *   DEALS_MAX_PER_RUN      -> posts per run (default 5)
@@ -30,7 +29,6 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { discoverDealsDetailed } = require('../lib/deals');
 const { convertAffiliateLink } = require('../lib/affiliate');
-const { shortenUrl } = require('../lib/shorten');
 
 // Load Firebase defensively: missing credentials must not crash the process.
 let fb = null;
@@ -505,8 +503,12 @@ module.exports = async (req, res) => {
             '). Set AMAZON_AFFILIATE_TAG / FLIPKART_AFFILIATE_ID to monetise it.'
         );
       }
-      // Bitly stays ON for channel posts only (bot replies use the link directly).
-      const shortLink = (await shortenUrl(targetUrl)) || targetUrl;
+      // The link is posted as-is. Bitly was REMOVED: its free tier is 10 links a
+      // month and the token was returning MONTHLY_ENCODE_LIMIT_REACHED on every
+      // call, so it was a request that could only ever fail. The affiliate link
+      // is already a short, tagged link — converting it through Cuelinks or the
+      // converter is what produces the compact form, and both still run.
+      const shortLink = targetUrl;
 
       try {
         console.log('deals: posting "' + String(deal.title).slice(0, 60) + '" (' + deal.discount + '% off) -> ' + shortLink);
@@ -544,7 +546,6 @@ module.exports = async (req, res) => {
         posted,
         skippedCount: skipped.length,
         skipped,
-        bitlyConfigured: Boolean(process.env.BITLY_ACCESS_TOKEN),
         sources: scan.sources,
         channelCheck: channel,
         ms,

@@ -286,15 +286,20 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 // single guess: their docs show two.
 {
   const api = fs.readFileSync(__dirname + '/lib/amazonapi.js', 'utf8');
-  check('both documented Omkar paths are tried',
-    /\/amazon\/product-details,\/products\/details/.test(api));
-  check('the Omkar path is overridable', /OMKAR_API_PATH/.test(api));
   check('a failed call logs the response body', /body=/.test(api));
   check('the hosted-API timeout is no longer 12s', !/AMAZON_API_TIMEOUT_MS \|\| '12000'/.test(api));
-  check('the code says RapidAPI IS Omkar', /RapidAPI listing[\s\S]{0,200}Omkar/.test(api));
+  // OMKAR WAS REMOVED. Its key answered 404 "Not Found" on both documented paths
+  // on every call. These assertions now pin the removal, so it cannot creep back.
+  check('the dead Omkar provider is gone from the code',
+    !/viaOmkar|OMKAR_API_KEY|OMKAR_API_PATH|DEFAULT_OMKAR_HOST/.test(api));
+  check('...and a key in the environment cannot configure it',
+    /return Boolean\(process\.env\.RAPIDAPI_KEY\);/.test(api));
+  check('the code says RapidAPI IS Omkar', /RapidAPI's listing here IS Omkar Cloud/.test(api));
+  check('...and records WHY the direct key was dropped', /REMOVED: Omkar Cloud/.test(api));
 
   const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
-  check('.env.example documents OMKAR_API_KEY', /OMKAR_API_KEY=/.test(env));
+  check('.env.example no longer offers the dead Omkar key', !/^OMKAR_API_KEY=/m.test(env));
+  check('.env.example no longer offers the exhausted Bitly token', !/^BITLY_ACCESS_TOKEN=/m.test(env));
   check('.env.example explains the RapidAPI/Omkar relationship',
     /RapidAPI listing IS Omkar Cloud/.test(env));
 
@@ -304,7 +309,6 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   delete process.env.OMKAR_API_KEY;
   check('with neither key it is not configured', amazonApiConfigured() === false);
   process.env.OMKAR_API_KEY = 'k';
-  check('an Omkar key alone configures it', amazonApiConfigured() === true);
   process.env.RAPIDAPI_KEY = saved.r;
   process.env.OMKAR_API_KEY = saved.o;
 }

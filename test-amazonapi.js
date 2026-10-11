@@ -36,18 +36,6 @@ const RAPID_PAYLOAD = {
   },
 };
 
-// Omkar's own API returns a single object, and may use a different image field.
-const OMKAR_PAYLOAD = {
-  status: 200,
-  data: {
-    asin: 'B0G81TPT89',
-    title: 'Samsung Galaxy M17 5G',
-    price: { amount: 17999, currency: 'INR', list_price: 22999 },
-    availability: { is_in_stock: false },
-    images: [{ large: 'http://m.media-amazon.com/images/I/y.jpg', variant: null }],
-  },
-};
-
 (async () => {
   // --- inert without keys -----------------------------------------------------
   delete process.env.RAPIDAPI_KEY;
@@ -69,24 +57,23 @@ const OMKAR_PAYLOAD = {
   check('RapidAPI: asks for amazon.in by default', seen[seen.length - 1].opts.params.country === 'IN');
   check('RapidAPI: reports its source', a.source === 'rapidapi');
 
-  // --- Omkar direct (single object, `large` image field) ----------------------
-  delete process.env.RAPIDAPI_KEY;
-  process.env.OMKAR_API_KEY = 'om_test';
-  reply = OMKAR_PAYLOAD;
+  // --- a single object is still accepted (the provider varies its shape) ------
+  reply = { status: 200, data: { title: 'Samsung Galaxy M17 5G', price: { amount: 17999, list_price: 22999 }, availability: { is_in_stock: false }, images: [{ large: 'http://m.media-amazon.com/images/I/y.jpg' }] } };
   const b = await api.lookupAsin('B0G81TPT89');
-  check('Omkar: a single object is accepted', b.title === 'Samsung Galaxy M17 5G');
-  check('Omkar: price', b.price === 17999);
-  check('Omkar: the `large` image field is used', b.image === 'https://m.media-amazon.com/images/I/y.jpg');
-  check('Omkar: out of stock', b.inStock === false);
-  check('Omkar: key header', seen[seen.length - 1].opts.headers['API-Key'] === 'om_test');
-  check('Omkar: country_code param', seen[seen.length - 1].opts.params.country_code === 'IN');
-  check('Omkar: reports its source', b.source === 'omkar');
+  check('a single object is accepted', b.title === 'Samsung Galaxy M17 5G');
+  check('the `large` image field is used', b.image === 'https://m.media-amazon.com/images/I/y.jpg');
+  check('out of stock', b.inStock === false);
 
-  // --- RapidAPI preferred when both are set ----------------------------------
+  // --- Omkar was REMOVED ------------------------------------------------------
+  // Its key answered 404 "Not Found" on both documented paths on every call.
+  // Setting the variable must now do nothing at all.
+  process.env.OMKAR_API_KEY = 'om_test';
+  delete process.env.RAPIDAPI_KEY;
+  check('the removed Omkar key is no longer configured', api.amazonApiConfigured() === false);
+  check('...and its presence cannot produce a lookup', (await api.lookupAsin('B0G81TPT89')) === null);
+  delete process.env.OMKAR_API_KEY;
   process.env.RAPIDAPI_KEY = 'rp_test';
   reply = RAPID_PAYLOAD;
-  const c = await api.lookupAsin('B0G81TPT89');
-  check('with both keys the larger free tier (RapidAPI) is tried first', c.source === 'rapidapi');
 
   // --- edge cases -------------------------------------------------------------
   reply = { status: 429, data: { message: 'quota' } };

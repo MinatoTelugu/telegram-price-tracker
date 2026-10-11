@@ -127,6 +127,22 @@ const AMAZON_OK = {
   check('the image is upgraded to https', a.image === 'https://m.media-amazon.com/images/I/71x.jpg');
   check('the source is recorded', a.source === 'oxylabs');
 
+  console.log('--- the M.R.P. wearing the price name (the reported bug) ---');
+  // Amazon showed ₹28,998 with an M.R.P. of ₹40,999. The card showed ₹40,999 and
+  // called it a +41% increase. The parser had returned the M.R.P. as the price.
+  const swapped = oxy.fromAmazonContent({ title: 'iQOO Z11xa 5G', price: 40999, price_initial: 40999, price_upper: 40999, stock: 'In stock.' });
+  check('a price EQUAL to the M.R.P. is not accepted as a price',
+    swapped.price === null, JSON.stringify(swapped));
+  const healthy = oxy.fromAmazonContent({ price_buybox: 28998, price: 28998, price_initial: 40999, stock: 'In stock.' });
+  check('the real price and the real M.R.P. both survive',
+    healthy.price === 28998 && healthy.mrp === 40999);
+  check('price_upper is used as the M.R.P. when price_initial is absent',
+    oxy.fromAmazonContent({ price_buybox: 28998, price_upper: 40999 }).mrp === 40999);
+  check('...and then the same equality guard applies',
+    oxy.fromAmazonContent({ title: 'X', price_buybox: 40999, price_upper: 40999 }).price === null);
+  check('the stock still comes through even when the price is rejected',
+    swapped.inStock === true);
+
   console.log('--- the sentinel and the fallbacks ---');
   // The parser uses -1 when there is no buy-box price at all.
   const sentinel = oxy.fromAmazonContent({ price: -1, price_buybox: -1, price_initial: 0, stock: 'Currently unavailable.', title: 'X' });

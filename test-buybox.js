@@ -127,6 +127,16 @@ const FLIPKART = [
 check('Flipkart price reads correctly', priceFromText(FLIPKART) === 21999);
 check('Flipkart stock reads correctly', availabilityFromText(FLIPKART) === false);
 
+console.log('--- a price equal to the M.R.P. is the M.R.P. ---');
+// The reported product, on the general path: M.R.P. ₹40,999, selling ₹28,998.
+// ₹40,999 was accepted because it is not ABOVE the M.R.P.
+check('the M.R.P. is not a price', priceLooksImplausible(40999, 40999) === true);
+check('the real selling price is fine', priceLooksImplausible(28998, 40999) === false);
+check('a genuine discount is fine', priceLooksImplausible(34999, 40999) === false);
+check('an EMI instalment is still rejected', priceLooksImplausible(6348, 40999) === true);
+check('above the M.R.P. is still rejected', priceLooksImplausible(53999, 40999) === true);
+check('a price ₹1 under the M.R.P. is still accepted', priceLooksImplausible(40998, 40999) === false);
+
 console.log('--- nothing is invented when the page says nothing ---');
 
 check('no price in, no price out', priceFromText('Title: X\nNo numbers here.') === null);

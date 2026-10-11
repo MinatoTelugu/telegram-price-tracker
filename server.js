@@ -89,6 +89,9 @@ if (!hasFirebase) {
 // problem: a run showed Amazon products being blocked with no mention of
 // Oxylabs, and there was no way to tell whether the key was missing, the code
 // was older, or it had simply never been reached.
+if (process.env.BRIGHTDATA_API_KEY) {
+  console.log('Scraper: Bright Data key set (Bearer -> api.brightdata.com) — tried first, covers Amazon and Flipkart.');
+}
 if (process.env.OXYLABS_API_KEY) {
   console.log('Scraper: Oxylabs Web API key set (Bearer -> webapi.oxylabs.io) — primary for Amazon and Flipkart.');
 } else if (process.env.OXYLABS_USERNAME && process.env.OXYLABS_PASSWORD) {
@@ -286,6 +289,26 @@ let bot = null;
  * accepted. Never awaited, never throws — a failure here is information, not an
  * outage, and the bot carries on with the other sources either way.
  */
+/**
+ * One real Bright Data call at boot, same reasoning as the Oxylabs probe: a key
+ * that is present but rejected should say so now, not an hour later.
+ */
+function probeBrightData() {
+  const { brightDataConfigured, lookupBrightData } = require('./lib/brightdata');
+  if (!brightDataConfigured()) return;
+  lookupBrightData({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' })
+    .then((r) => {
+      if (r && r.price != null) {
+        console.log('Scraper probe: Bright Data answered — price=' + r.price + '. The key is good.');
+      } else if (r) {
+        console.log('Scraper probe: Bright Data answered but returned no price. The key is good; the dataset id is what to check.');
+      } else {
+        console.warn('Scraper probe: Bright Data returned nothing — see the brightdata: line above for why.');
+      }
+    })
+    .catch((err) => console.warn('Scraper probe: Bright Data threw — ' + err.message));
+}
+
 function probeOxylabs() {
   const { oxylabsConfigured, lookupOxylabs } = require('./lib/oxylabs');
   if (!oxylabsConfigured()) return;
@@ -372,6 +395,7 @@ async function startPolling() {
   // a 401. That line only reports that the VARIABLE is populated; it says nothing
   // about whether the API accepts it. This makes one real call and reports the
   // answer. Deliberately NOT awaited: startup must not wait on the network.
+  probeBrightData();
   probeOxylabs();
 
   console.log('Starting Telegram polling...');

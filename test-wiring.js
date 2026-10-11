@@ -332,6 +332,12 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   }
   check('the startup banner says which scraper is in play',
     /Scraper: Oxylabs Web API key set/.test(server));
+  check('...and PROBES it, so a bad credential shows at boot not hours later',
+    /function probeOxylabs/.test(server) && /probeOxylabs\(\);/.test(server));
+  check('...without blocking startup on the network',
+    !/await probeOxylabs/.test(server));
+  check('...and it explains the most likely cause of a 401',
+    /username \+ password, not a key/.test(server));
   check('...and names the missing credentials when there are none',
     /no Oxylabs credentials/.test(server) && /OXYLABS_API_KEY/.test(server));
 

@@ -281,6 +281,33 @@ let bot = null;
  * Open connections to the hosts we rely on, in the background. Cheap, and it
  * removes DNS + TLS setup from the first real request after a cold start.
  */
+/**
+ * One real Oxylabs call at startup, purely to report whether the credential is
+ * accepted. Never awaited, never throws — a failure here is information, not an
+ * outage, and the bot carries on with the other sources either way.
+ */
+function probeOxylabs() {
+  const { oxylabsConfigured, lookupOxylabs } = require('./lib/oxylabs');
+  if (!oxylabsConfigured()) return;
+  // A stable, long-lived ASIN. Any Amazon product would do; this one is used
+  // elsewhere in the codebase so its failure mode is already understood.
+  lookupOxylabs({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' })
+    .then((r) => {
+      if (r && r.price != null) {
+        console.log('Scraper probe: Oxylabs answered — price=' + r.price + '. The credential is good.');
+      } else if (r) {
+        console.log('Scraper probe: Oxylabs answered but returned no price. The credential is good; the parse is what to look at.');
+      } else {
+        console.warn(
+          'Scraper probe: Oxylabs returned nothing. If the log above shows a 401, the ' +
+            'credential is for a different Oxylabs product — a Web Scraper API login is a ' +
+            'username + password, not a key. Otherwise this was a transient failure.'
+        );
+      }
+    })
+    .catch((err) => console.warn('Scraper probe: Oxylabs threw — ' + err.message));
+}
+
 async function warmUp() {
   const { httpsAgent } = require('./lib/httpAgent');
   const https = require('https');
@@ -337,6 +364,15 @@ async function startPolling() {
   // does not pay DNS + TLS for every host. A scale-to-zero host that has just
   // woken up is the main reason a reply can feel slow.
   warmUp().catch((err) => console.warn('warm-up failed:', err.message));
+
+  // Probe the scraper ONCE at boot, so a bad credential is visible in the log
+  // immediately rather than at the next price check — which may be hours away.
+  //
+  // The last two logs both said "Oxylabs Web API key set" and then, much later,
+  // a 401. That line only reports that the VARIABLE is populated; it says nothing
+  // about whether the API accepts it. This makes one real call and reports the
+  // answer. Deliberately NOT awaited: startup must not wait on the network.
+  probeOxylabs();
 
   console.log('Starting Telegram polling...');
   try {

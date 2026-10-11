@@ -297,6 +297,16 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the code says RapidAPI IS Omkar', /RapidAPI's listing here IS Omkar Cloud/.test(api));
   check('...and records WHY the direct key was dropped', /REMOVED: Omkar Cloud/.test(api));
 
+  // The startup banner must not warn about a key we deliberately removed. The
+  // Koyeb log showed "NOTE: BITLY_ACCESS_TOKEN is not set, so links will not be
+  // shortened" AFTER Bitly was gone, which reads as a misconfiguration.
+  const server = fs.readFileSync(__dirname + '/server.js', 'utf8');
+  check('the startup banner no longer mentions the removed Bitly key',
+    !/BITLY/.test(server));
+  check('...and no startup warning mentions a removed provider', !/OMKAR/.test(server));
+  check('the startup banner warns when the check schedule would exhaust the API quota',
+    /PRICE_CRON is \"/.test(server) && /1,000/.test(server));
+
   const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
   check('.env.example no longer offers the dead Omkar key', !/^OMKAR_API_KEY=/m.test(env));
   check('.env.example no longer offers the exhausted Bitly token', !/^BITLY_ACCESS_TOKEN=/m.test(env));

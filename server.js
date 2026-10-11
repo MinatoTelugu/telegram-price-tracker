@@ -54,11 +54,26 @@ if (!hasFirebase) {
       'FIREBASE_SERVICE_ACCOUNT_KEY (or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY).'
   );
 }
-if (!process.env.BITLY_ACCESS_TOKEN) {
-  console.warn('NOTE: BITLY_ACCESS_TOKEN is not set, so links will not be shortened.');
-}
 if (!process.env.WEB_APP_URL) {
   console.warn('NOTE: WEB_APP_URL is not set, so the "Price History" button will be hidden.');
+}
+// A price-check schedule that runs more often than the Amazon API's quota can
+// serve. RapidAPI's free tier is 1,000 calls/month and it is the ONLY structured
+// Amazon source we have, so a */30 schedule over a few dozen products exhausts it
+// in days — and when it is gone, Amazon falls back to the reader's text scan,
+// which is the guess that produced the wrong prices in the first place.
+const priceCron = process.env.PRICE_CRON || '0 */6 * * *';
+{
+  const every30 = /^\*\/30\b/.test(priceCron.trim());
+  const everyMinute = /^\*\s|^\*\/\d+\b/.test(priceCron.trim()) && !/\/30|\/1[0-9]|\/[2-9][0-9]/.test(priceCron.trim());
+  if (every30 || everyMinute) {
+    console.warn(
+      'NOTE: PRICE_CRON is "' + priceCron + '". The Amazon API free tier is 1,000 ' +
+        'calls/month; a schedule this frequent will exhaust it within days, after ' +
+        'which Amazon prices fall back to a text guess. Every 2-6 hours is plenty ' +
+        'for a price tracker.'
+    );
+  }
 }
 
 // ---- helpers --------------------------------------------------------------

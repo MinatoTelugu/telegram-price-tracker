@@ -164,7 +164,10 @@ URL to register or repair**, no serverless time limit, and no cron frequency cap
 2. In Koyeb: **Create Service → GitHub** and pick this repository.
 3. Builder: **Dockerfile** (already included). Port: **8080**.
 4. Add the same environment variables as for Vercel — `BOT_TOKEN`,
-   the Firebase credentials, `AMAZON_AFFILIATE_TAG`, `BITLY_ACCESS_TOKEN`, etc.
+   the Firebase credentials, `AMAZON_AFFILIATE_TAG`, `RAPIDAPI_KEY`, etc.
+   (`BITLY_ACCESS_TOKEN` and `OMKAR_API_KEY` are gone: Bitly's free tier is 10
+   links a month and the token was out of quota, and Omkar's direct key answered
+   404 on both documented paths. Neither is read by the code any more.)
    `WEB_APP_URL` is still worth setting (so the "Price History" button points at
    your site). `CRON_SECRET` and `TELEGRAM_WEBHOOK_SECRET` are **not** needed.
 5. Deploy. The logs should show `Bot started in long-polling mode.`

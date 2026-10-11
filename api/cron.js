@@ -359,6 +359,7 @@ async function processProduct(doc) {
   // sent. If the re-read fails, we change nothing and carry on as before, because
   // an inability to check must never silence a genuine alert.
   let confirmedPrice = newPriceRaw;
+  let unconfirmed = false;
   if (oldPrice != null && confirmedPrice != null && oldPrice > 0 && Math.abs(((confirmedPrice - oldPrice) / oldPrice) * 100) >= CONFIRM_THRESHOLD) {
     try {
       // The second reading must come from a DIFFERENT source. Re-reading the same
@@ -382,11 +383,20 @@ async function processProduct(doc) {
       }
       if (again && again.ok && again.price != null) {
         if (again.price !== confirmedPrice) {
+          // The two sources DISAGREE, so neither can be trusted — and the log
+          // shows why that matters: the store lists ₹21,999, one reading said
+          // ₹28,998, the independent re-read said ₹27,999 (which is the 4GB
+          // variant's struck-through MRP, not a selling price). Adopting either
+          // would be a guess.
+          //
+          // So keep the price we already had, write nothing, and alert nobody.
+          // A genuine change is AGREED by both readings and proceeds normally;
+          // only a contradiction stops here.
           console.warn(
-            'cron: ' + doc.id + ' — price ' + confirmedPrice + ' not confirmed (re-read ' +
-              again.price + '); using the confirmed value and sending no alert'
+            'cron: ' + doc.id + ' — ' + confirmedPrice + ' vs ' + again.price +
+              ': the sources disagree, so neither is trusted. Keeping the stored price and sending no alert'
           );
-          confirmedPrice = again.price;
+          unconfirmed = true;
         } else {
           console.log('cron: ' + doc.id + ' — price ' + confirmedPrice + ' confirmed on a second read');
         }
@@ -396,6 +406,18 @@ async function processProduct(doc) {
     }
   }
 
+
+  if (unconfirmed) {
+    // Nothing recorded, nothing alerted: the price is left exactly as it was, so
+    // the dashboard keeps showing the last figure we could actually stand behind.
+    return {
+      id: doc.id,
+      status: 'unconfirmed',
+      url: String(url).slice(0, 120),
+      inStock: typeof result.inStock === 'boolean' ? result.inStock : null,
+      httpStatus: result.status || null,
+    };
+  }
 
   const newPrice = confirmedPrice;
 

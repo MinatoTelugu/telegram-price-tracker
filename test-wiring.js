@@ -430,7 +430,17 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('a sub-1% drift is left alone', Math.abs(((21800 - 21999) / 21999) * 100) < thr);
   check('a large move triggers a re-read', /Math\.abs\(\(\(confirmedPrice - oldPrice\) \/ oldPrice\) \* 100\) >= CONFIRM_THRESHOLD/.test(cron));
   check('the re-read can reach the page for non-Amazon stores', /again = await fetchProduct\(/.test(cron));
-  check('a disagreeing re-read replaces the price', /confirmedPrice = again\.price;/.test(cron));
+  // A DISAGREEMENT means neither value can be trusted — so nothing is written.
+  // The log showed the cost of adopting the second one anyway: the store lists
+  // ₹21,999, one reading said ₹28,998, and the independent re-read said ₹27,999,
+  // which is the 4GB variant's struck-through MRP. Adopting it would be a guess.
+  check('a disagreement is treated as untrusted, not adopted', /unconfirmed = true;/.test(cron));
+  check('...and the second value is NOT taken', !/confirmedPrice = again\.price;/.test(cron));
+  check('nothing is written when unconfirmed', /if \(unconfirmed\) \{[\s\S]{0,400}status: 'unconfirmed'/.test(cron));
+  check('no alert is sent when unconfirmed',
+    cron.indexOf('if (unconfirmed) {') < cron.indexOf('formatAlert(alertProduct'));
+  check('the stored price is therefore left as it was', /Keeping the stored price and sending no alert/.test(cron));
+  check('an AGREEMENT still proceeds normally', /confirmed on a second read/.test(cron));
   check('...and the confirmed value is what gets stored', /const newPrice = confirmedPrice;/.test(cron));
   check('a FAILED re-read changes nothing, so a genuine alert is never silenced',
     /could not confirm the move/.test(cron) && !/confirmedPrice = null/.test(cron));
@@ -487,7 +497,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
   check('the confirmation uses the hosted API for Amazon', /const item = asin \? await lookupAsin\(asin\)/.test(cron));
   check('...and falls back to a page read for other stores', /again = await fetchProduct\(/.test(cron));
-  check('...and the independent figure wins when they disagree', /confirmedPrice = again\.price;/.test(cron));
+  check('...and neither is adopted when they disagree (see below)', /unconfirmed = true;/.test(cron));
 }
 
 // --- /stats and the new-user log ---------------------------------------------

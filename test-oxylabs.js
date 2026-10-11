@@ -168,6 +168,24 @@ const AMAZON_OK = {
   check('the carousel cannot influence the price — there is no scan to fool',
     withCarouselNoise.price === 21999);
 
+  console.log('--- a single key can belong to EITHER product ---');
+  // The Web API 401s; the same key is then retried against the Web Scraper API
+  // as an access_token query parameter, which is the other form a single key
+  // takes. Patching the module's captured axios from here is not possible (the
+  // loader hands out a fresh stub), so this pins the shape rather than the call.
+  const oxySrc = require('fs').readFileSync(__dirname + '/lib/oxylabs.js', 'utf8');
+  check('a rejected Web API key is retried against realtime.oxylabs.io',
+    /retrying it as a Web Scraper API access_token/.test(oxySrc));
+  check('...as an access_token query parameter',
+    /params = \{ access_token: process\.env\.OXYLABS_API_KEY \}/.test(oxySrc));
+  check('...only AFTER the Web API call inside lookupOxylabs',
+    (() => {
+      const body = oxySrc.slice(oxySrc.indexOf('async function lookupOxylabs'));
+      return body.indexOf('/v1/scrape/amazon/product') < body.indexOf('retrying it as a Web Scraper API');
+    })());
+  check('...and the Bearer header is not also sent on that retry',
+    /if \(!useWebApi && o\.accessToken\)/.test(oxySrc));
+
   console.log('--- a non-200 is reported, not thrown ---');
   reply = { status: 401, data: { message: 'Unauthorized' } };
   check('an auth failure yields null', (await oxy.lookupOxylabs({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' })) === null);

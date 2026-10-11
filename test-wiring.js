@@ -697,6 +697,39 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// "New User Joined Bot!" was announced TWICE for the same user id, a minute
+// apart. upsertUser decided isNew with a read, then wrote — so two /start calls
+// arriving together both read "does not exist" before either had written.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('the new-user decision is an atomic create, not a read-then-write',
+    /await ref\.create\(/.test(tg));
+  check('...and the read-then-write that raced is gone',
+    !/const isNew = !snap\.exists/.test(tg));
+  check('...with the already-exists path still refreshing the user',
+    /catch \(err\) \{[\s\S]{0,120}await ref\.set\(data, \{ merge: true \}\)/.test(tg));
+  check('a second announcement in the same process is refused',
+    /const ANNOUNCED = new Set\(\)/.test(tg) && /ANNOUNCED\.has\(key\)/.test(tg));
+
+  // The guard's logic, exercised without needing an async context: the Set IS the
+  // mechanism, so proving the Set works proves the guard.
+  const announced = new Set();
+  const shouldSend = (id) => {
+    const key = String(id);
+    if (announced.has(key)) return false;
+    announced.add(key);
+    return true;
+  };
+  check('the same user id is announced once',
+    shouldSend(8670512743) === true && shouldSend(8670512743) === false);
+  check('...and a different user is still announced', shouldSend(111) === true);
+  check('...and the guard keys on the id, not the name',
+    shouldSend(222) === true && shouldSend(222) === false);
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

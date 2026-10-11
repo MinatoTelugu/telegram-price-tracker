@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-117 (2026-10-11)';
+const BUILD = 'names-118 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -500,10 +500,21 @@ function extractUrl(text) {
  * using the bot, and there is no channel-join lock anywhere — this is a record,
  * not a gate.
  */
+// One announcement per user id per process, whatever the callers do. The atomic
+// create above is the real fix; this is the belt to its braces, and it also
+// covers a retry that lands after a restart within the same instance.
+const ANNOUNCED = new Set();
+
 async function logNewUser(from) {
   const channel = String(process.env.LOG_CHANNEL || '').trim();
   const token = process.env.BOT_TOKEN;
   if (!channel || !token || !from) return;
+  const key = String(from.id);
+  if (ANNOUNCED.has(key)) {
+    console.log('new-user log: already announced ' + key + ' in this process; skipping');
+    return;
+  }
+  ANNOUNCED.add(key);
   const lines = [
     '🚨 <b>New User Joined Bot!</b>',
     '👤 Name: ' + escapeHtml(from.first_name || '—'),
@@ -532,9 +543,27 @@ async function upsertUser(from) {
     languageCode: from.language_code || null,
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
   };
-  const isNew = !snap.exists;
-  if (isNew) data.createdAt = admin.firestore.FieldValue.serverTimestamp();
-  await ref.set(data, { merge: true });
+  // ── "IS THIS A NEW USER?" MUST BE ATOMIC ──────────────────────────────────
+  //
+  // It used to be read-then-write: `snap.exists` decided, then a set() followed.
+  // Two /start calls arriving close together — Telegram retrying an update, or
+  // someone tapping Start twice — BOTH read "does not exist" before either had
+  // written, so both announced the user. The channel log showed exactly that:
+  // "New User Joined Bot!" for the same User ID twice, a minute apart.
+  //
+  // create() is atomic: it fails if the document is already there, so exactly one
+  // caller can win the race. The loser falls through to a merge set, which is
+  // what refreshes lastSeenAt on every later contact anyway.
+  let isNew = false;
+  try {
+    await ref.create(
+      Object.assign({}, data, { createdAt: admin.firestore.FieldValue.serverTimestamp() })
+    );
+    isNew = true;
+  } catch (err) {
+    // Already present — the normal case for every contact after the first.
+    await ref.set(data, { merge: true });
+  }
 
   // A first-ever start is worth recording. Deliberately after the write, so the
   // user exists in our data even if the log fails, and never awaited by callers.

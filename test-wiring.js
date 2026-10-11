@@ -489,7 +489,11 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the reader still supplies the MRP when the API has none',
     /if \(out\.mrp == null\) out\.mrp = mrpFromText/.test(body));
   check('the reader only fills a price the API did not give',
-    /if \(out\.price == null\) out\.price = priceFromText/.test(body));
+    /if \(out\.price == null\) \{[\s\S]{0,120}priceFromTextMatch/.test(body));
+  check('...and records HOW it matched, so a bare guess is distinguishable',
+    /out\.priceKind = pm\.kind/.test(body));
+  check('the hosted API\'s price is marked as coming from the API',
+    /out\.priceKind = 'api'/.test(body));
   check('Flipkart still works through the reader alone',
     /if \(out\.inStock == null\) out\.inStock = availabilityFromText/.test(body));
 

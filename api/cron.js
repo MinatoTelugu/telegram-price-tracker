@@ -421,16 +421,44 @@ async function processProduct(doc) {
 
   const newPrice = confirmedPrice;
 
+  // A BARE GUESS IS NOT A READING.
+  //
+  // When the store refuses this host we fall back to a reader service, which
+  // hands back the page as free text, and the price becomes "the first ₹ in the
+  // buy area". That is a guess: it is how a card showed ₹19,999 for a product
+  // the store listed at ₹21,999, and how the wrong number then became a history
+  // point, a lowest, an average and a 30-day range.
+  //
+  // So a guess may CONFIRM a price it agrees with, but it may never MOVE one,
+  // and it is never written as a reading. A real change has to come from a
+  // source that states the price — the page's own markup, or the hosted API.
+  if (result.guess && oldPrice != null && newPrice !== oldPrice) {
+    console.warn(
+      'cron: ' + doc.id + ' — price ' + newPrice +
+        ' came from a text guess and differs from the stored ' + oldPrice +
+        '; not recording it and sending no alert'
+    );
+    return {
+      id: doc.id,
+      status: 'guessed',
+      url: String(url).slice(0, 120),
+      inStock: typeof result.inStock === 'boolean' ? result.inStock : null,
+      httpStatus: result.status || null,
+    };
+  }
+
   // Capture the PREVIOUS stock state BEFORE the update below. Reading it after
   // the write is fragile — the snapshot may already reflect the new value.
   const wasOutOfStock = data.inStock === false;
 
-  // Append the history point.
-  await doc.ref.collection(COLLECTIONS.PRICE_HISTORY).add({
-    price: newPrice,
-    currency: result.currency || 'INR',
-    checkedAt: FieldValue.serverTimestamp(),
-  });
+  // Append the history point — but never a guessed one.
+  if (!result.guess) {
+    await doc.ref.collection(COLLECTIONS.PRICE_HISTORY).add({
+      price: newPrice,
+      currency: result.currency || 'INR',
+      checkedAt: FieldValue.serverTimestamp(),
+    });
+  }
 
   const update = {
     lastPrice: newPrice,

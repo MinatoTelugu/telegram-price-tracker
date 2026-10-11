@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-102 (2026-10-11)';
+const BUILD = 'names-103 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -42,7 +42,7 @@ const {
   extractFlipkartPid,
 } = require('../lib/affiliate');
 const { convertWithProvider, converterConfigured, convertRaw } = require('../lib/converter');
-const { fetchProduct, resolveProductName, firstRealPrice } = require('../lib/scraper');
+const { fetchProduct, resolveProductName, firstRealPrice, buyboxText } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
 const { fetchReadablePage } = require('../lib/reader');
 const { lookupAsin, amazonApiConfigured } = require('../lib/amazonapi');
@@ -1040,7 +1040,10 @@ function cleanProductName(title) {
  * "price", and otherwise takes the first rupee amount.
  */
 function priceFromText(text) {
-  const t = String(text || '');
+  // Read the BUY AREA only. The reader hands back the whole page, related
+  // products and all, and scanning it whole is how a DIFFERENT phone's ₹19,999
+  // became this product's price on the very page the user was looking at.
+  const t = buyboxText(text);
   if (!t) return null;
   // Prefer a figure that is explicitly labelled a price.
   const near = /(?:price|offer price|current price|deal price)[^\d₹]{0,40}(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t);

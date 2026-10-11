@@ -53,6 +53,7 @@ eval(grab('cleanProductName'));
 eval(grab('priceFromText'));
 // firstRealPrice and parsePrice live in the scraper, so read that file too.
 const scraperSrc = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+eval(grabScraper('buyboxText'));
 function grabScraper(name) {
   const m = scraperSrc.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}', 'm'));
   if (!m) throw new Error('could not extract ' + name + ' from lib/scraper.js');

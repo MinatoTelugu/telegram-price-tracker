@@ -33,14 +33,27 @@ function check(name, ok) {
 }
 
 const page = fs.readFileSync(__dirname + '/public/index.html', 'utf8');
-function grab(re) {
-  const m = page.match(re);
-  if (!m) throw new Error('could not extract ' + re);
-  return m[0];
+
+/** Pull a top-level function or var block out of the page by name. */
+function grab(name) {
+  const start = page.search(new RegExp('(?:function |var )' + name + '\\b'));
+  if (start < 0) throw new Error('could not find ' + name + ' in the page');
+  const open = page.indexOf('{', start);
+  if (open < 0) throw new Error('no body for ' + name);
+  let depth = 0;
+  for (let i = open; i < page.length; i++) {
+    if (page[i] === '{') depth++;
+    else if (page[i] === '}') {
+      depth--;
+      if (depth === 0) return page.slice(start, i + 1);
+    }
+  }
+  throw new Error('unbalanced braces for ' + name);
 }
 
 // --- 2) the currency ---------------------------------------------------------
-eval(grab(/var CURRENCY_SYMBOLS = \{[\s\S]*?\n  \}/));
+eval(grab('CURRENCY_SYMBOLS'));
+eval(grab('money'));
 
 check('INR renders the rupee', money(28998, 'INR') === '₹28,998');
 check('a lowercase code still renders the rupee', money(28998, 'inr') === '₹28,998');
@@ -72,8 +85,8 @@ check('the corrupted high is excluded', high === 28998);
 check('the average is no longer dragged up', avg === 28331);
 check('the honest low survives', low === 26998);
 check('the page applies exactly that filter',
-  /h\.price <= mrpRef \* 1\.02 && h\.price >= mrpRef \* 0\.4/.test(page));
-check('...and falls back when nothing survives', /if \(!usable\.length\) usable = hist;/.test(page));
+  /h\.price <= mrp \* 1\.02 && h\.price >= mrp \* 0\.4/.test(page));
+check('...and falls back when nothing survives', /return ok\.length \? ok : hist;/.test(page));
 
 // --- 1) the gauge position, and therefore the verdict ------------------------
 const pos = (28998 - low) / (high - low);
@@ -92,8 +105,8 @@ check('so the old verdict threshold would have said "reasonable time to buy"',
 
 // --- the verdict must respect a rise ----------------------------------------
 check('a rise is detected before the verdict is worded', /var rose = \(prev != null && last != null && last > prev\)/.test(page));
-check('a rise says the price went up', /The price just went UP/.test(page));
-check('a rise near the high recommends waiting', /waiting is the sensible move/.test(page));
+check('a rise says the price went up', /The price just went <strong[^>]*>UP /.test(page));
+check('a rise recommends waiting', /Waiting for it to come back down is the sensible move/.test(page));
 check('the rise branch comes FIRST, so it cannot be overridden',
   page.indexOf('if (rose) {') < page.indexOf('} else if (pos <= 0.15) {'));
 

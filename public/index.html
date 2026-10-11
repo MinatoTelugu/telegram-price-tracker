@@ -1,597 +1,636 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Price History — Ai Price Alert Bot</title>
-<meta name="description" content="Track the ups and downs of product prices on Amazon and Flipkart." />
-<link rel="icon" href="/logo.jpg" />
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AiPriceAlert Terminal — Live Tracker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          cyber: {
+            bg: '#040d08',
+            card: '#08170f',
+            cardBorder: 'rgba(0, 255, 136, 0.25)',
+            neonGreen: '#00ff88',
+            neonGold: '#ffcc00',
+            neonRed: '#ff2d55'
+          }
+        }
+      }
+    }
+  };
+</script>
 <style>
-  :root{
-    --page:#f4f6f9;
-    --card:#ffffff;
-    --line:#e7eaf0;
-    --ink:#0f1b2d;
-    --muted:#6b7787;
-    --blue:#1f6feb;
-    --blue-dark:#1558c0;
-    --teal:#0f9d8f;
-    --red:#e5484d;
-    --amber:#e8a317;
-    --green:#12a150;
-    --radius:20px;
+  body {
+    background-color: #040d08;
+    color: #e2e8f0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    -webkit-tap-highlight-color: transparent;
   }
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0}
-  body{
-    background:var(--page); color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased;
-    padding-bottom:96px; /* room for the sticky bar */
+  .neon-glow-green { box-shadow: 0 0 15px rgba(0, 255, 136, 0.35); }
+  .neon-glow-gold { text-shadow: 0 0 12px rgba(255, 204, 0, 0.6); }
+  .neon-glow-card { box-shadow: 0 0 20px rgba(0, 255, 136, 0.08); }
+  .neon-border { border: 1px solid rgba(0, 255, 136, 0.22); }
+  .glass-card {
+    background: linear-gradient(145deg, rgba(8, 23, 15, 0.85), rgba(4, 15, 10, 0.95));
+    backdrop-filter: blur(12px);
   }
-  .wrap{width:100%;max-width:820px;margin:0 auto;padding:20px 16px 32px}
-
-  /* ---------- header ---------- */
-  .brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
-  .brand img{width:46px;height:46px;border-radius:14px;object-fit:cover;box-shadow:0 2px 10px rgba(15,27,45,.10)}
-  .brand h1{font-size:20px;margin:0;font-weight:800;letter-spacing:-.01em}
-  .brand p{margin:3px 0 0;font-size:12.5px;color:var(--muted)}
-
-  /* ---------- cards ---------- */
-  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-        padding:18px;margin-bottom:16px;box-shadow:0 1px 3px rgba(15,27,45,.05),0 8px 24px rgba(15,27,45,.04)}
-  .card > h2{font-size:15px;margin:0 0 14px;font-weight:800;letter-spacing:-.01em}
-  .eyebrow{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
-
-  /* ---------- search ---------- */
-  .search{display:flex;gap:10px;flex-wrap:wrap}
-  .search input{flex:1 1 220px;min-width:0;border:1px solid var(--line);background:#fbfcfe;border-radius:14px;
-                padding:13px 14px;font-size:15px;color:var(--ink);outline:none}
-  .search input:focus{border-color:var(--blue);background:#fff}
-  .search button{background:var(--blue);color:#fff;border:0;border-radius:14px;padding:13px 22px;
-                 font-weight:700;font-size:15px;cursor:pointer}
-  .search button:active{background:var(--blue-dark)}
-  .hint{font-size:12.5px;color:var(--muted);margin-top:11px}
-
-  /* ---------- product ---------- */
-  .prod{display:flex;gap:16px;align-items:flex-start}
-  .prod .pic{width:104px;height:104px;flex:0 0 104px;border-radius:16px;background:#f7f8fa;
-             border:1px solid var(--line);object-fit:contain;padding:6px}
-  .prod .info{min-width:0;flex:1}
-  .store{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;
-         letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
-  .ptitle{font-size:17px;font-weight:800;line-height:1.35;margin:8px 0 0;word-break:break-word}
-  .pmeta{font-size:12.5px;color:var(--muted);margin-top:6px;word-break:break-all}
-  .stars{font-size:14px;letter-spacing:1px;color:var(--amber);margin-top:8px}
-  .stars span{color:#d7dbe2}
-
-  .pricelabel{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
-              color:var(--muted);margin-top:16px}
-  .priceline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-top:4px}
-  .prevline{font-size:13.5px;font-weight:700;color:var(--muted);margin-top:6px}
-  .prevline b{color:var(--ink)}
-  .prevline .up{color:var(--red)}
-  .prevline .down{color:var(--green)}
-  .price{font-size:30px;font-weight:800;letter-spacing:-.02em}
-  .mrp{font-size:15px;color:var(--muted);text-decoration:line-through}
-  .off{font-size:12.5px;font-weight:800;color:var(--green);background:rgba(18,161,80,.10);
-       border-radius:999px;padding:4px 10px}
-  .oos{font-size:12.5px;font-weight:800;color:var(--red);background:rgba(229,72,77,.10);
-       border-radius:999px;padding:4px 10px}
-
-  .buybtn{display:block;width:100%;text-align:center;text-decoration:none;background:var(--blue);color:#fff;
-          border-radius:16px;padding:15px 18px;font-weight:800;font-size:16px;margin-top:16px}
-  .buybtn:active{background:var(--blue-dark)}
-
-  /* ---------- 3-column stats ---------- */
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
-  .stat{background:#fbfcfe;border:1px solid var(--line);border-radius:14px;padding:12px}
-  .stat .k{font-size:11.5px;color:var(--muted);font-weight:700}
-  .stat .v{font-size:16px;font-weight:800;margin-top:5px;word-break:break-word}
-  .stat.lo .v{color:var(--green)}
-  .stat.hi .v{color:var(--red)}
-
-  /* ---------- decision ---------- */
-  .gauge{position:relative;margin:6px 0 4px;padding-top:26px}
-  .gauge .track{height:10px;border-radius:999px;
-    background:linear-gradient(90deg,#e5484d 0%,#f0803c 28%,#e8a317 52%,#39a86f 76%,#12a150 100%)}
-  .gauge .knob{position:absolute;top:14px;width:22px;height:22px;border-radius:50%;background:#fff;
-               border:3px solid var(--ink);transform:translateX(-50%);box-shadow:0 2px 8px rgba(15,27,45,.25)}
-  .gauge .labels{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);font-weight:700;margin-top:10px}
-  .gauge .labels b{color:var(--ink)}
-  .explain{font-size:13.5px;line-height:1.6;color:var(--muted);margin:14px 0 0}
-
-  /* ---------- chart ---------- */
-  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);font-weight:700;margin-bottom:10px}
-  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
-  .chartctl{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-  .iconbtn{border:1px solid var(--line);background:#fbfcfe;color:var(--ink);border-radius:11px;
-           padding:8px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
-  .iconbtn:active{background:#eef1f6}
-  .chart-box{position:relative;height:300px}
-  .empty{font-size:13px;color:var(--muted);padding:18px 0;line-height:1.6}
-  .ranges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;justify-content:center}
-  .range{border:1px solid var(--line);background:#fbfcfe;color:var(--muted);border-radius:999px;
-         padding:8px 15px;font-size:12.5px;font-weight:800;cursor:pointer}
-  .range.active{background:var(--blue);border-color:var(--blue);color:#fff}
-
-  /* ---------- sticky mobile buy bar ---------- */
-  .sticky{position:fixed;left:0;right:0;bottom:0;display:none;align-items:center;gap:12px;
-          padding:12px 16px calc(12px + env(safe-area-inset-bottom));
-          background:rgba(255,255,255,.97);border-top:1px solid var(--line);
-          box-shadow:0 -6px 24px rgba(15,27,45,.10);z-index:40}
-  .sticky .share{width:46px;height:46px;flex:0 0 46px;border-radius:14px;border:1px solid var(--line);
-                 background:#fbfcfe;font-size:19px;cursor:pointer;line-height:1}
-  .sticky a.buybtn{margin:0;flex:1;padding:14px 16px;font-size:15.5px}
-  @media (max-width:640px){ .sticky{display:flex} .card .buybtn.in-card{display:none} }
-  @media (max-width:400px){
-    .prod .pic{width:88px;height:88px;flex:0 0 88px}
-    .price{font-size:26px}
-    .stats{grid-template-columns:repeat(3,1fr);gap:8px}
-    .stat{padding:10px}
-    .stat .v{font-size:14px}
-    .chart-box{height:250px}
-    .wrap{padding:16px 14px 28px}
-  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-thumb { background: rgba(0, 255, 136, 0.3); border-radius: 4px; }
+  .hidden { display: none !important; }
 </style>
 </head>
-<body>
-<div class="wrap">
+<body class="min-h-screen pb-28 text-slate-100 antialiased">
 
-  <div class="brand">
-    <img src="/logo.jpg" alt="Ai Price Alert Bot" />
-    <div>
-      <h1>Price History</h1>
-      <p>Track the ups and downs of product prices</p>
+<!-- TOP BAR -->
+<header class="sticky top-0 z-50 glass-card border-b border-emerald-500/20 px-4 py-3">
+  <div class="max-w-md mx-auto flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="relative">
+        <div class="w-11 h-11 rounded-xl bg-slate-950 border border-emerald-500/50 flex items-center justify-center neon-glow-green">
+          <span class="text-2xl">🤖</span>
+        </div>
+        <span id="live-dot" class="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-slate-600 rounded-full border-2 border-[#040d08]"></span>
+      </div>
+      <div>
+        <div class="flex items-center space-x-1.5">
+          <h1 class="font-bold text-sm text-white tracking-wide">@AiPriceAlertBot</h1>
+          <span class="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-1.5 rounded font-mono font-bold">TERMINAL</span>
+        </div>
+        <p class="text-[11px] text-emerald-400/90 font-mono flex items-center mt-0.5">
+          <i class="fa-solid fa-signal text-[9px] mr-1 text-emerald-400"></i>
+          PRICE READINGS: <span id="reading-count" class="font-bold text-emerald-300 ml-1">—</span>
+        </p>
+      </div>
     </div>
+    <button onclick="triggerToast('Prices are checked automatically by the bot.')"
+            class="w-9 h-9 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-center text-emerald-400 hover:bg-emerald-800/30 transition">
+      <i class="fa-solid fa-bell text-xs"></i>
+    </button>
   </div>
+</header>
 
-  <div class="card">
-    <p class="eyebrow">Find a product&rsquo;s price history</p>
-    <div class="search">
-      <input id="q" type="url" inputmode="url" autocomplete="off"
-             placeholder="Paste an Amazon or Flipkart product link" aria-label="Product link" />
-      <button id="go" type="button">Check</button>
+<main class="max-w-md mx-auto px-3.5 pt-3.5 space-y-3.5">
+
+  <!-- SEARCH -->
+  <section class="glass-card rounded-2xl p-3.5 neon-border neon-glow-card">
+    <div class="flex items-center justify-between mb-2">
+      <label class="text-[11px] font-mono uppercase tracking-wider text-emerald-400 font-semibold flex items-center">
+        <i class="fa-solid fa-crosshairs mr-1.5"></i> Find a product's price history
+      </label>
+      <span class="text-[10px] text-slate-400 font-mono">Amazon · Flipkart</span>
     </div>
-    <p class="hint">Supported: <b>Amazon</b> and <b>Flipkart</b>. Paste a product link and tap Check.</p>
-  </div>
+    <div class="flex gap-2">
+      <div class="relative flex-1">
+        <input type="text" id="url-input" placeholder="Paste a product link or id"
+               class="w-full bg-[#040d08] border border-emerald-500/40 rounded-xl pl-3 pr-8 py-2 text-xs text-emerald-200 placeholder-emerald-800 focus:outline-none focus:border-emerald-400 font-mono truncate">
+        <button onclick="clearInput()" class="absolute right-2.5 top-2.5 text-slate-500 hover:text-emerald-400 text-xs">
+          <i class="fa-solid fa-circle-xmark"></i>
+        </button>
+      </div>
+      <button onclick="runSearch()" class="bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black px-4 py-2 rounded-xl text-xs transition flex items-center justify-center space-x-1 neon-glow-green shrink-0">
+        <span id="btn-text">CHECK</span>
+        <i class="fa-solid fa-bolt text-[10px]"></i>
+      </button>
+    </div>
+  </section>
 
-  <div id="msg"></div>
+  <!-- EMPTY / ERROR STATE -->
+  <section id="note" class="glass-card rounded-2xl p-4 neon-border hidden">
+    <p id="note-text" class="text-[11px] font-mono text-slate-300"></p>
+  </section>
 
-  <div id="result" style="display:none">
+  <!-- PRODUCT -->
+  <section id="result" class="hidden space-y-3.5">
+    <section class="glass-card rounded-2xl p-4 neon-border relative overflow-hidden">
+      <div class="absolute -right-10 -top-10 w-28 h-28 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none"></div>
 
-    <!-- product -->
-    <div class="card">
-      <div class="prod">
-        <img class="pic" id="pImg" alt="" />
-        <div class="info">
-          <div class="store" id="pMarket"></div>
-          <h2 class="ptitle" id="pTitle"></h2>
-          <div class="stars" id="pStars" style="display:none"></div>
-          <div class="pmeta" id="pMeta"></div>
+      <div class="flex items-start space-x-3.5">
+        <div class="relative w-16 h-16 rounded-xl bg-slate-950 border border-emerald-500/30 p-1.5 shrink-0 flex items-center justify-center">
+          <img id="p-img" alt="" class="w-full h-full object-contain rounded-lg hidden">
+          <i id="p-img-fallback" class="fa-solid fa-box text-emerald-700 text-xl"></i>
+          <span id="p-market" class="absolute -top-1.5 -left-1.5 bg-amber-500 text-slate-950 text-[9px] font-black font-mono px-1.5 rounded-md uppercase shadow-md">—</span>
+        </div>
+
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center justify-between gap-2">
+            <span id="p-id" class="text-[10px] font-mono text-emerald-400/80 truncate"></span>
+            <span id="p-stock" class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0"></span>
+          </div>
+          <h2 id="p-title" class="text-sm font-bold text-white truncate mt-0.5"></h2>
+
+          <div class="mt-1.5 flex items-baseline space-x-2">
+            <span class="text-[10px] font-mono text-slate-400">CURRENT</span>
+            <span id="p-price" class="text-xl font-extrabold text-[#ffcc00] font-mono neon-glow-gold">—</span>
+          </div>
+
+          <div class="flex items-center space-x-2 text-[11px] font-mono mt-0.5 flex-wrap">
+            <span id="p-mrp-wrap" class="text-slate-400 hidden">MRP: <span id="p-mrp" class="line-through text-slate-500"></span></span>
+            <span id="p-off" class="text-emerald-400 font-bold bg-emerald-500/10 px-1 rounded border border-emerald-500/20 hidden"></span>
+            <span id="p-prev" class="text-slate-400"></span>
+          </div>
         </div>
       </div>
 
-      <div class="pricelabel">Current Price</div>
-      <div class="priceline">
-        <div class="price" id="pPrice">—</div>
-        <div class="mrp" id="pMrp" style="display:none"></div>
-        <div class="off" id="pOff" style="display:none"></div>
-        <div class="oos" id="pOos" style="display:none">Out of stock</div>
+      <div class="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-emerald-500/20 text-center font-mono">
+        <div class="bg-slate-950/60 border border-emerald-500/15 rounded-xl p-2">
+          <div class="text-[9px] text-slate-400 uppercase tracking-wide">Highest</div>
+          <div id="stat-high" class="text-xs font-bold text-red-400 mt-0.5">—</div>
+        </div>
+        <div class="bg-slate-950/60 border border-emerald-500/15 rounded-xl p-2">
+          <div class="text-[9px] text-slate-400 uppercase tracking-wide">Average</div>
+          <div id="stat-avg" class="text-xs font-bold text-amber-300 mt-0.5">—</div>
+        </div>
+        <div class="bg-slate-950/60 border border-emerald-500/15 rounded-xl p-2">
+          <div class="text-[9px] text-slate-400 uppercase tracking-wide">Lowest</div>
+          <div id="stat-low" class="text-xs font-bold text-emerald-400 mt-0.5">—</div>
+        </div>
       </div>
-      <div class="prevline" id="pPrev" style="display:none"></div>
 
-      <a class="buybtn in-card" id="buyBtn" href="#" target="_blank" rel="noopener">Buy now</a>
+      <div class="mt-2 text-[10px] text-slate-400 font-mono text-right flex items-center justify-end">
+        <i class="fa-regular fa-clock mr-1 text-emerald-400/70"></i>
+        Updated: <span id="last-update" class="ml-1 text-slate-300">—</span>
+      </div>
+    </section>
 
-      <div class="stats">
-        <div class="stat hi"><div class="k">Highest</div><div class="v" id="sHigh">—</div></div>
-        <div class="stat"><div class="k">Average</div><div class="v" id="sAvg">—</div></div>
-        <div class="stat lo"><div class="k">Lowest</div><div class="v" id="sLow">—</div></div>
+    <!-- BUYING METER -->
+    <section class="glass-card rounded-2xl p-3.5 neon-border">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-bold text-white font-mono flex items-center">
+          <i class="fa-solid fa-gauge-high text-emerald-400 mr-1.5"></i> Should you buy at this price?
+        </h3>
+        <span id="verdict-badge" class="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold border">—</span>
       </div>
-      <div class="pmeta" id="updated" style="margin-top:12px"></div>
-    </div>
 
-    <!-- decision -->
-    <div class="card">
-      <h2>Should you buy at this price?</h2>
-      <div class="gauge">
-        <div class="track"></div>
-        <div class="knob" id="knob" style="left:50%"></div>
-        <div class="labels"><span>Skip</span><span>Wait</span><span>Okay</span><span><b>Yes</b></span></div>
+      <div class="relative my-3">
+        <div class="h-2.5 w-full rounded-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 p-0.5 relative">
+          <div id="meter-pointer" class="absolute -top-1.5 w-5 h-5 bg-slate-950 border-2 border-emerald-400 rounded-full shadow-lg transition-all duration-500 left-1/2 flex items-center justify-center">
+            <span class="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping"></span>
+          </div>
+        </div>
+        <div class="flex justify-between text-[10px] font-mono text-slate-400 mt-2 px-0.5 font-semibold">
+          <span id="lbl-skip">Skip</span>
+          <span id="lbl-wait">Wait</span>
+          <span id="lbl-okay">Okay</span>
+          <span id="lbl-yes">Yes!</span>
+        </div>
       </div>
-      <p class="explain" id="explain"></p>
-    </div>
 
-    <!-- chart -->
-    <div class="card">
-      <h2>Price History Graph</h2>
-      <div class="legend">
-        <span><i style="background:var(--red)"></i>Offer Price</span>
-        <span><i style="background:var(--teal)"></i>Prices</span>
-      </div>
-      <div class="chartctl">
-        <button class="iconbtn" id="fs" type="button" aria-label="Fullscreen">⛶ Fullscreen</button>
-        <button class="iconbtn" id="dl" type="button" aria-label="Download chart">⭳ Download</button>
-        <button class="iconbtn" id="cp" type="button" aria-label="Copy chart image">⧉ Copy</button>
-      </div>
-      <div class="chart-box" id="chartBox"><canvas id="chart" aria-label="Price history chart"></canvas></div>
-      <div class="empty" id="chartEmpty" style="display:none">No price points recorded yet — check back after the next scheduled run.</div>
-      <div class="ranges" id="ranges">
-        <button class="range active" data-r="all" type="button">All</button>
-        <button class="range" data-r="1y" type="button">1Y</button>
-        <button class="range" data-r="6m" type="button">6M</button>
-        <button class="range" data-r="3m" type="button">3M</button>
-        <button class="range" data-r="1m" type="button">1M</button>
-        <button class="range" data-r="reset" type="button">Reset</button>
-      </div>
-    </div>
+      <p id="meter-desc" class="text-[11px] text-slate-300 font-mono bg-slate-950/60 border border-emerald-500/20 p-2.5 rounded-xl leading-relaxed"></p>
+    </section>
 
+    <!-- CHART -->
+    <section class="glass-card rounded-2xl p-3.5 neon-border">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-bold text-white font-mono flex items-center">
+          <i class="fa-solid fa-chart-area text-emerald-400 mr-1.5"></i> Price History Graph
+        </h3>
+        <div class="flex space-x-2 text-[10px] font-mono">
+          <span class="flex items-center text-slate-400"><span class="w-2 h-2 rounded-full bg-[#ff2d55] mr-1"></span>MRP</span>
+          <span class="flex items-center text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-400 mr-1"></span>Price</span>
+        </div>
+      </div>
+
+      <div class="relative h-52 w-full bg-[#040d08] border border-emerald-500/20 rounded-xl p-2 my-2">
+        <canvas id="priceHistoryChart"></canvas>
+      </div>
+
+      <div class="flex items-center justify-between gap-1 mt-3 font-mono" id="filters">
+        <button onclick="filterGraph('all', this)" data-range="all" class="filter-btn flex-1 py-1 bg-emerald-400 text-slate-950 font-black rounded-lg text-[10px] transition text-center shadow">All</button>
+        <button onclick="filterGraph('1y', this)" data-range="1y" class="filter-btn flex-1 py-1 bg-slate-950 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] transition text-center hover:bg-emerald-950">1Y</button>
+        <button onclick="filterGraph('6m', this)" data-range="6m" class="filter-btn flex-1 py-1 bg-slate-950 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] transition text-center hover:bg-emerald-950">6M</button>
+        <button onclick="filterGraph('3m', this)" data-range="3m" class="filter-btn flex-1 py-1 bg-slate-950 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] transition text-center hover:bg-emerald-950">3M</button>
+        <button onclick="filterGraph('1m', this)" data-range="1m" class="filter-btn flex-1 py-1 bg-slate-950 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] transition text-center hover:bg-emerald-950">1M</button>
+      </div>
+    </section>
+
+    <!-- RECENT DROPS -->
+    <section class="glass-card rounded-2xl p-3.5 neon-border">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-bold text-white font-mono flex items-center">
+          <i class="fa-solid fa-receipt text-emerald-400 mr-1.5"></i> Recent Price Drops
+        </h3>
+        <span class="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">FROM THIS HISTORY</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-[11px] font-mono">
+          <thead>
+            <tr class="border-b border-emerald-500/20 text-emerald-400/70 text-[9px]">
+              <th class="pb-1.5">WHEN</th>
+              <th class="pb-1.5">PRICE</th>
+              <th class="pb-1.5 text-right">DROPPED</th>
+            </tr>
+          </thead>
+          <tbody id="drops-table-body" class="divide-y divide-emerald-500/10 text-slate-300"></tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+</main>
+
+<!-- STICKY BOTTOM -->
+<footer id="bottom" class="fixed bottom-0 left-0 right-0 bg-[#040d08]/90 backdrop-blur-lg border-t border-emerald-500/30 p-3 z-50 hidden">
+  <div class="max-w-md mx-auto flex items-center gap-2.5">
+    <button onclick="shareLink()" class="w-11 h-11 rounded-xl bg-slate-950 border border-emerald-500/40 flex items-center justify-center text-emerald-400 hover:bg-emerald-900/40 transition shrink-0">
+      <i class="fa-solid fa-share-nodes text-sm"></i>
+    </button>
+    <a id="buyBtn" href="#" target="_blank" rel="noopener"
+       class="flex-1 bg-gradient-to-r from-blue-600 via-teal-400 to-emerald-400 hover:from-blue-500 hover:to-emerald-300 text-slate-950 font-black py-3 px-4 rounded-xl text-center text-xs uppercase tracking-wider transition neon-glow-green flex items-center justify-center space-x-2">
+      <span id="buyBtn-label">Buy Now</span>
+      <i class="fa-solid fa-cart-shopping text-xs"></i>
+    </a>
   </div>
-</div>
-
-<div class="sticky">
-  <button class="share" id="shareBtn" type="button" aria-label="Share this page">↗</button>
-  <a class="buybtn" id="buyBtn2" href="#" target="_blank" rel="noopener">Buy now</a>
-</div>
+</footer>
 
 <script>
-(function () {
-  var $ = function (id) { return document.getElementById(id); };
-  var API = '/api/track?id=';
-  var state = { history: [], currency: 'INR', chart: null, range: 'all' };
+/* ---------------------------------------------------------------------------
+   Everything here is driven by the REAL data from /api/track?id=… — no
+   placeholder numbers. Where we do not have a figure, the UI says so rather
+   than inventing one.
+   --------------------------------------------------------------------------- */
 
-  function show(el) { if (el) el.style.display = ''; }
-  function hide(el) { if (el) el.style.display = 'none'; }
-  var CURRENCY_SYMBOLS = { INR: '₹', USD: '$', GBP: '£', EUR: '€', AED: 'AED ' };
-  function money(n, cur) {
-    if (n == null || isNaN(n)) return '—';
-    // Normalise first: a code stored as "inr", " INR" or missing entirely must
-    // still resolve to the rupee rather than falling through to no symbol at all.
-    var code = String(cur == null ? '' : cur).trim().toUpperCase();
-    var sym = CURRENCY_SYMBOLS[code];
-    if (sym == null) sym = '₹';
-    return sym + Number(n).toLocaleString('en-IN');
+var API = '/api/track?id=';
+var state = { history: [], currency: 'INR', product: null, chart: null, range: 'all' };
+var $ = function (id) { return document.getElementById(id); };
+
+function triggerToast(msg) {
+  var old = $('custom-toast');
+  if (old) old.remove();
+  var t = document.createElement('div');
+  t.id = 'custom-toast';
+  t.className = 'fixed top-16 left-1/2 -translate-x-1/2 z-50 glass-card border border-emerald-400 text-emerald-300 text-xs font-mono px-3.5 py-2 rounded-xl shadow-2xl flex items-center space-x-2';
+  t.innerHTML = '<i class="fa-solid fa-bolt text-emerald-400"></i><span>' + msg + '</span>';
+  document.body.appendChild(t);
+  setTimeout(function () { t.style.opacity = '0'; setTimeout(function () { t.remove(); }, 300); }, 2500);
+}
+
+/* --- currency -------------------------------------------------------------- */
+var CURRENCY_SYMBOLS = { INR: '₹', USD: '$', GBP: '£', EUR: '€', AED: 'AED ' };
+function money(n, cur) {
+  if (n == null || isNaN(n)) return '—';
+  var code = String(cur == null ? '' : cur).trim().toUpperCase();
+  var sym = CURRENCY_SYMBOLS[code];
+  if (sym == null) sym = '₹';
+  return sym + Number(n).toLocaleString('en-IN');
+}
+function stamp(ms) {
+  if (!ms) return '—';
+  try {
+    return new Date(ms).toLocaleString('en-IN',
+      { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return '—'; }
+}
+function storeName(m) {
+  if (m === 'amazon') return 'Amazon';
+  if (m === 'flipkart') return 'Flipkart';
+  return m ? (m.charAt(0).toUpperCase() + m.slice(1)) : 'Product';
+}
+function show(el) { if (el) el.classList.remove('hidden'); }
+function hide(el) { if (el) el.classList.add('hidden'); }
+function note(msg) { $('note-text').textContent = msg; show($('note')); }
+
+/* --- id from a link or an id ---------------------------------------------- */
+function idFromInput(raw) {
+  var s = String(raw || '').trim();
+  if (!s) return null;
+  var m = s.match(/[?&]id=([a-z]+_[A-Za-z0-9]+)/i);
+  if (m) return m[1];
+  if (/^[a-z]+_[A-Za-z0-9]+$/i.test(s)) return s;
+  return null;
+}
+function idFromQuery() {
+  try {
+    return new URLSearchParams(location.search).get('id');
+  } catch (e) { return null; }
+}
+
+/* --- the readings we can actually stand behind ---------------------------- */
+/* A reading above the MRP is impossible; one far below it is an exchange offer
+   or an EMI instalment. One such reading drags the average and the high, which
+   then pushes the meter to "Yes" for a price that just rose. */
+function usableReadings(hist, mrp) {
+  var ok = hist.filter(function (h) {
+    if (typeof h.price !== 'number' || !isFinite(h.price) || h.price <= 0) return false;
+    if (mrp == null) return true;
+    return h.price <= mrp * 1.02 && h.price >= mrp * 0.4;
+  });
+  return ok.length ? ok : hist;
+}
+
+/* --- render --------------------------------------------------------------- */
+function render(id, p, hist) {
+  var isIndianStore = p.marketplace === 'amazon' || p.marketplace === 'flipkart';
+  var cur = isIndianStore ? 'INR' : (p.currency || 'INR');
+  state.currency = cur;
+  state.product = p;
+
+  var mrpRef = (p.mrp != null && p.mrp > 0) ? p.mrp : null;
+  var usable = usableReadings(hist, mrpRef);
+  state.history = usable;
+
+  show($('result'));
+  show($('bottom'));
+  hide($('note'));
+
+  /* image */
+  if (p.imageUrl) {
+    $('p-img').src = p.imageUrl;
+    $('p-img').onerror = function () { hide($('p-img')); show($('p-img-fallback')); };
+    show($('p-img')); hide($('p-img-fallback'));
+  } else {
+    hide($('p-img')); show($('p-img-fallback'));
   }
-  function stamp(ms) {
-    if (!ms) return '';
-    try {
-      return new Date(ms).toLocaleString('en-IN',
-        { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch (e) { return ''; }
-  }
-  function storeName(m) {
-    if (m === 'amazon') return 'Amazon';
-    if (m === 'flipkart') return 'Flipkart';
-    return m ? (m.charAt(0).toUpperCase() + m.slice(1)) : 'Product';
-  }
-  // Store marks, used ONLY as a fallback when there is no product photo.
-  var STORE_LOGO = {
-    flipkart: 'https://www.flipkart.com/favicon.ico',
-    amazon: 'https://www.amazon.in/favicon.ico',
-  };
-  function badgeDataUri(label) {
-    var t = String(label || 'Store').slice(0, 10);
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">' +
-      '<rect width="120" height="120" rx="26" fill="#eef2f7"/>' +
-      '<text x="60" y="72" font-family="Arial,Helvetica,sans-serif" font-size="20" font-weight="700" ' +
-      'fill="#8792a2" text-anchor="middle">' + t + '</text></svg>';
-    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+
+  $('p-market').textContent = storeName(p.marketplace);
+  $('p-title').textContent = p.title || p.productId || id;
+  $('p-id').textContent = p.productId ? (p.productId) : '';
+
+  var last = p.lastPrice != null ? p.lastPrice : (usable.length ? usable[usable.length - 1].price : null);
+  $('p-price').textContent = money(last, cur);
+
+  /* stock — only claim a state when the data states one */
+  var stock = $('p-stock');
+  if (p.inStock === false) {
+    stock.textContent = 'OUT OF STOCK';
+    stock.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 bg-red-500/20 text-red-400 border-red-500/40';
+  } else if (p.inStock === true) {
+    stock.textContent = 'IN STOCK';
+    stock.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
+  } else {
+    stock.textContent = 'STOCK UNKNOWN';
+    stock.className = 'text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 bg-slate-500/20 text-slate-300 border-slate-500/40';
   }
 
-  /**
-   * The product photo, with graceful degradation:
-   *   1. the scraped product image
-   *   2. the store's own mark, if the image is missing or fails to load
-   *   3. a plain store badge (inline SVG, so it works offline)
-   */
-  function setProductImage(p) {
-    var img = $('pImg');
-    var store = p.marketplace || '';
-    var chain = [];
-    if (p.imageUrl) chain.push(p.imageUrl);
-    if (STORE_LOGO[store]) chain.push(STORE_LOGO[store]);
-    chain.push(badgeDataUri(storeName(store)));
-
-    var i = 0;
-    img.onerror = function () {
-      i++;
-      if (i < chain.length) img.src = chain[i];
-      else img.onerror = null;
-    };
-    img.src = chain[0];
-    img.alt = p.title ? (p.title + ' — product image') : (storeName(store) + ' product image');
-    show(img);
+  /* MRP and the previous price */
+  if (mrpRef != null && last != null && mrpRef > last) {
+    $('p-mrp').textContent = money(mrpRef, cur);
+    show($('p-mrp-wrap'));
+    $('p-off').textContent = '▼ ' + Math.round(((mrpRef - last) / mrpRef) * 100) + '% OFF';
+    show($('p-off'));
+  } else {
+    hide($('p-mrp-wrap')); hide($('p-off'));
   }
 
-  function note(text, kind) {
-    var el = $('msg');
-    el.innerHTML = text
-      ? '<div class="card" style="border-color:' + (kind === 'bad' ? 'rgba(229,72,77,.4)' : 'var(--line)') + '">' +
-        '<div class="explain" style="margin:0;color:' + (kind === 'bad' ? 'var(--red)' : 'var(--ink)') + '">' + text + '</div></div>'
-      : '';
+  var prev = null;
+  var seq = usable.map(function (h) { return h.price; });
+  for (var i = seq.length - 2; i >= 0; i--) {
+    if (seq[i] !== last) { prev = seq[i]; break; }
   }
-  function idFromInput(v) {
-    v = (v || '').trim();
-    var m = v.match(/[?&]id=([a-z]+_[A-Za-z0-9]+)/);
-    if (m) return m[1];
-    if (/^[a-z]+_[A-Za-z0-9]+$/.test(v)) return v;
-    return null;
+  $('p-prev').innerHTML = (prev != null && last != null)
+    ? ('Prev: <span class="text-slate-300">' + money(prev, cur) + '</span> <span class="' +
+       (last < prev ? 'text-emerald-400' : 'text-red-400') + '">' +
+       (last < prev ? '▼' : '▲') + ' ' + Math.round((Math.abs(last - prev) / prev) * 100) + '%</span>')
+    : '';
+
+  /* stats, from the readings we trust */
+  var prices = seq;
+  var low = prices.length ? Math.min.apply(null, prices) : null;
+  var high = prices.length ? Math.max.apply(null, prices) : null;
+  var avg = prices.length ? Math.round(prices.reduce(function (a, b) { return a + b; }, 0) / prices.length) : null;
+  $('stat-low').textContent = money(low, cur);
+  $('stat-high').textContent = money(high, cur);
+  $('stat-avg').textContent = money(avg, cur);
+
+  $('last-update').textContent = p.lastCheckedAt ? stamp(p.lastCheckedAt) : 'not yet checked';
+  $('reading-count').textContent = prices.length || '0';
+  $('live-dot').className = 'absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#040d08] ' +
+    (prices.length ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600');
+
+  /* the verdict */
+  var pointer = $('meter-pointer'), desc = $('meter-desc'), badge = $('verdict-badge');
+  ['skip', 'wait', 'okay', 'yes'].forEach(function (k) { $('lbl-' + k).className = ''; });
+
+  function verdict(label, tone, text) {
+    badge.textContent = label;
+    badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-mono font-bold border ' + tone;
+    desc.innerHTML = text;
   }
 
-  // ---- load -----------------------------------------------------------------
-  function load(id) {
-    note('');
-    fetch(API + encodeURIComponent(id))
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        if (!d || !d.ok) {
-          note('Could not find that product. It may not be tracked yet — send the link to the bot first.', 'bad');
-          return;
-        }
-        render(id, d.product || {}, d.history || []);
-      })
-      .catch(function () { note('Could not load the price history just now. Please try again.', 'bad'); });
-  }
+  if (prices.length < 2 || low == null || high == null) {
+    pointer.style.left = '50%';
+    verdict('NO DATA', 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+      'Not enough price history yet. A buy verdict appears once a few readings have been recorded.');
+  } else if (low === high) {
+    pointer.style.left = '62%';
+    verdict('FLAT', 'bg-slate-500/20 text-slate-300 border-slate-500/40',
+      'Every reading so far is <strong class="text-amber-300">' + money(last, cur) +
+      '</strong>. There has been no movement, so there is nothing to gain by waiting.');
+  } else {
+    var pos = (last - low) / (high - low);
+    pos = Math.max(0, Math.min(1, pos));
+    /* The bar runs Skip -> Wait -> Okay -> Yes, so a price at its LOW sits on the
+       right. The pointer is therefore inverted. */
+    pointer.style.left = ((1 - pos) * 100) + '%';
+    var aboveLow = Math.round(((last - low) / low) * 100);
+    var rose = (prev != null && last != null && last > prev);
 
-  // ---- render ---------------------------------------------------------------
-  function render(id, p, hist) {
-    // amazon.in and flipkart are Indian stores, so the currency IS the rupee.
-    // A scraper can guess wrong and store something else, and that is how a
-    // foreign symbol reached the analysis text.
-    var isIndianStore = p.marketplace === 'amazon' || p.marketplace === 'flipkart';
-    var cur = isIndianStore ? 'INR' : (p.currency || 'INR');
-    state.history = hist;
-    state.currency = cur;
-
-    show($('result'));
-
-    // image (hidden when the page gave us none)
-    setProductImage(p);
-
-    $('pMarket').textContent = storeName(p.marketplace);
-    $('pTitle').textContent = p.title || p.productId || id;
-    $('pMeta').textContent = p.productId ? ('ID ' + p.productId) : '';
-
-    var last = p.lastPrice != null ? p.lastPrice : (hist.length ? hist[hist.length - 1].price : null);
-    var prices0 = hist.map(function (h) { return h.price; }).filter(function (x) { return typeof x === 'number'; });
-
-    // price / MRP / discount — only what the data actually says
-    $('pPrice').textContent = money(last, cur);
-
-    // What the price was before the most recent change — so a drop or a hike is
-    // obvious at a glance instead of just a bare number.
-    var prev = null;
-    for (var pi = prices0.length - 2; pi >= 0; pi--) {
-      if (prices0[pi] !== last) { prev = prices0[pi]; break; }
-    }
-    var prevEl = $('pPrev');
-    if (prev != null && last != null) {
-      var diff = last - prev;
-      var pct = prev ? Math.round((Math.abs(diff) / prev) * 100) : 0;
-      var arrow = diff < 0 ? '▼' : '▲';
-      var cls = diff < 0 ? 'down' : 'up';
-      prevEl.innerHTML = 'Previous Price: <b>' + money(prev, cur) + '</b> &nbsp;' +
-        '<span class="' + cls + '">' + arrow + ' ' + pct + '% ' + (diff < 0 ? 'lower' : 'higher') + '</span>';
-      show(prevEl);
+    if (rose) {
+      /* A price that just went UP is never "a reasonable time to buy". */
+      var pctUp = Math.round(((last - prev) / prev) * 100);
+      $('lbl-wait').className = 'text-amber-300 font-bold uppercase tracking-wider';
+      verdict('WAIT', 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+        '<i class="fa-solid fa-triangle-exclamation text-amber-300 mr-1"></i>' +
+        'The price just went <strong class="text-red-400">UP ' + pctUp + '%</strong> (from ' +
+        money(prev, cur) + ' to ' + money(last, cur) + '). It is ' + aboveLow +
+        '% above the lowest recorded (<strong class="text-emerald-400">' + money(low, cur) +
+        '</strong>). Waiting for it to come back down is the sensible move.');
+    } else if (pos <= 0.15) {
+      $('lbl-yes').className = 'text-emerald-400 font-bold uppercase tracking-wider';
+      verdict('BEST TIME', 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        '<i class="fa-solid fa-circle-check text-emerald-400 mr-1"></i>The current price is within ' +
+        aboveLow + '% of the lowest recorded (<strong class="text-amber-300">' + money(low, cur) +
+        '</strong>). This is about as good as it has been.');
+    } else if (pos <= 0.4) {
+      $('lbl-okay').className = 'text-emerald-400 font-bold uppercase tracking-wider';
+      verdict('OKAY', 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        'The current price is ' + aboveLow + '% above the lowest recorded (<strong class="text-amber-300">' +
+        money(low, cur) + '</strong>). Closer to the low than the high, so buying now is reasonable.');
+    } else if (pos <= 0.75) {
+      $('lbl-wait').className = 'text-amber-300 font-bold uppercase tracking-wider';
+      verdict('WAIT', 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+        'The current price sits ' + aboveLow + '% above the lowest recorded (<strong class="text-amber-300">' +
+        money(low, cur) + '</strong>). Not a bad price, but waiting may get you closer to the low.');
     } else {
-      hide(prevEl);
+      $('lbl-skip').className = 'text-red-400 font-bold uppercase tracking-wider';
+      verdict('SKIP', 'bg-red-500/20 text-red-400 border-red-500/40',
+        'The current price is near the highest recorded (<strong class="text-red-400">' + money(high, cur) +
+        '</strong>) and ' + aboveLow + '% above the low. Waiting for a drop is likely to pay off.');
     }
-    if (p.mrp != null && last != null && p.mrp > last) {
-      $('pMrp').textContent = money(p.mrp, cur); show($('pMrp'));
-      var off = Math.round(((p.mrp - last) / p.mrp) * 100);
-      $('pOff').textContent = off + '% Off'; show($('pOff'));
-    } else { hide($('pMrp')); hide($('pOff')); }
-    if (p.inStock === false) show($('pOos')); else hide($('pOos'));
-
-    var buy = p.affiliateUrl || p.cleanUrl || '#';
-    var label = 'Buy @ ' + storeName(p.marketplace).toLowerCase() + '.com';
-    $('buyBtn').href = buy; $('buyBtn').textContent = label;
-    $('buyBtn2').href = buy; $('buyBtn2').textContent = label;
-
-    $('updated').textContent = p.lastCheckedAt ? ('Last updated ' + stamp(p.lastCheckedAt)) : '';
-
-    // stats from the REAL history — but only from readings that COULD be prices.
-    //
-    // A reading above the MRP is impossible, and one far below it is an exchange
-    // offer or an EMI instalment. Both were recorded on real products (₹53,999 on
-    // a phone whose MRP is ₹40,999; ₹6,348, the instalment in "₹6,348 x 3m"). One
-    // such reading drags the average and the high, which then pushes the gauge to
-    // "Yes" and the verdict to "a reasonable time to buy" — the very wrongness
-    // being reported. The history is cleaned server-side too; this makes the page
-    // right immediately, without waiting for that.
-    var mrpRef = (p.mrp != null && p.mrp > 0) ? p.mrp : null;
-    var usable = hist.filter(function (h) {
-      if (typeof h.price !== 'number' || !isFinite(h.price) || h.price <= 0) return false;
-      if (mrpRef == null) return true;
-      return h.price <= mrpRef * 1.02 && h.price >= mrpRef * 0.4;
-    });
-    if (!usable.length) usable = hist;
-    var prices = usable
-      .map(function (h) { return h.price; })
-      .filter(function (x) { return typeof x === 'number'; });
-    var low = prices.length ? Math.min.apply(null, prices) : null;
-    var high = prices.length ? Math.max.apply(null, prices) : null;
-    var avg = prices.length ? Math.round(prices.reduce(function (a, b) { return a + b; }, 0) / prices.length) : null;
-    $('sLow').textContent = money(low, cur);
-    $('sHigh').textContent = money(high, cur);
-    $('sAvg').textContent = money(avg, cur);
-
-    // ---- decision: derived from the real numbers, never invented -------------
-    var knob = $('knob'), ex = $('explain');
-    if (prices.length < 2 || low == null || high == null) {
-      knob.style.left = '50%';
-      ex.textContent = 'Not enough price history yet. A buy verdict appears once a few price points have been recorded.';
-    } else if (low === high) {
-      knob.style.left = '62%';
-      ex.textContent = 'Every price recorded so far is ' + money(last, cur) +
-        '. There has been no movement yet, so there is nothing to gain by waiting — and nothing to lose by buying now.';
-    } else {
-      // 0 = at the low, 1 = at the high. The gauge runs Skip -> Wait -> Okay ->
-      // Yes left to right, so the knob must be INVERTED: a price at its lowest
-      // belongs on the right (Yes), a price at its highest on the left (Skip).
-      var pos = (last - low) / (high - low);
-      pos = Math.max(0, Math.min(1, pos));
-      knob.style.left = ((1 - pos) * 100) + '%';
-      var aboveLow = Math.round(((last - low) / low) * 100);
-
-      // A price that just WENT UP is never "a reasonable time to buy".
-      //
-      // The gauge reads position within the recorded range, and a rise can still
-      // sit low in that range — which is how a +7.4% increase produced "Yes" and
-      // "a reasonable time to buy". Buying just after a rise means paying more
-      // than the price was a moment ago, so the verdict has to say so.
-      var rose = (prev != null && last != null && last > prev);
-      if (rose) {
-        var pctUp = Math.round(((last - prev) / prev) * 100);
-        var nearHigh = pos >= 0.75;
-        // The knob reflects the honest position; the WORDS reflect the rise.
-        ex.textContent = 'The price just went UP ' + pctUp + '% (from ' + money(prev, cur) + ' to ' +
-          money(last, cur) + '). It is ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
-          '). ' + (nearHigh
-            ? 'It is also near the highest recorded (' + money(high, cur) + '), so waiting is the sensible move.'
-            : 'Waiting for it to come back down is the sensible move.');
-      } else if (pos <= 0.15) {
-        ex.textContent = 'The current price is within ' + aboveLow + '% of the lowest price recorded (' +
-          money(low, cur) + '). This is about as good as it has been — a reasonable time to buy.';
-      } else if (pos <= 0.4) {
-        ex.textContent = 'The current price is ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
-          '). It is closer to the low than the high, so buying now is reasonable, though a small drop is possible.';
-      } else if (pos <= 0.75) {
-        ex.textContent = 'The current price sits ' + aboveLow + '% above the lowest recorded (' + money(low, cur) +
-          '). It is not a bad price, but waiting may get you closer to the low.';
-      } else {
-        ex.textContent = 'The current price is near the highest recorded (' + money(high, cur) +
-          ') and ' + aboveLow + '% above the low. Waiting for a drop is likely to pay off.';
-      }
-    }
-
-    // ---- chart --------------------------------------------------------------
-    if (!hist.length) {
-      hide($('chartBox')); show($('chartEmpty')); return;
-    }
-    hide($('chartEmpty')); show($('chartBox'));
-
-    if (typeof Chart === 'undefined') {
-      $('chartBox').innerHTML = '<div class="empty">Chart library could not load. ' + hist.length +
-        ' price point(s): ' + prices.map(function (x) { return money(x, cur); }).join(' → ') + '</div>';
-      return;
-    }
-    drawChart(hist, low, high, avg, cur);
   }
 
-  // ---- chart ----------------------------------------------------------------
-  function drawChart(hist, low, high, avg, cur) {
-    var ctx = $('chart');
-    if (state.chart) { state.chart.destroy(); state.chart = null; }
+  /* buy buttons */
+  var buy = p.affiliateUrl || p.cleanUrl || '#';
+  $('buyBtn').href = buy;
+  $('buyBtn-label').textContent = 'Buy @ ' + storeName(p.marketplace).toLowerCase() + '.com';
 
-    var labels = hist.map(function (h) {
-      if (!h.t) return '';
-      var d = new Date(h.t);
-      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-    });
-    var data = hist.map(function (h) { return h.price; });
+  populateDrops(usable, cur);
+  buildChart(usable, mrpRef, cur);
+}
 
-    // Reference lines come from the real history, not from constants.
-    function flat(v, colour) {
-      return { label: '', data: hist.map(function () { return v; }), borderColor: colour,
-               borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, fill: false, tension: 0 };
+/* --- recent drops, derived from the real history --------------------------- */
+function populateDrops(hist, cur) {
+  var body = $('drops-table-body');
+  var drops = [];
+  for (var i = 1; i < hist.length && drops.length < 8; i++) {
+    var a = hist[i - 1].price, b = hist[i].price;
+    if (typeof a === 'number' && typeof b === 'number' && b < a) {
+      drops.push({ t: hist[i].t, price: b, saved: a - b });
     }
-    var sets = [
-      flat(high, 'rgba(229,72,77,.75)'),
-      flat(avg, 'rgba(232,163,23,.75)'),
-      flat(low, 'rgba(15,157,143,.75)'),
-      { label: 'Prices', data: data, borderColor: '#0f9d8f',
-        backgroundColor: 'rgba(15,157,143,0.14)', borderWidth: 2.5,
-        fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 5 }
-    ];
-
-    state.chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: labels, datasets: sets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: function (c) { return money(c.parsed.y, cur); } } },
-          zoom: (typeof Chart.Zoom !== 'undefined' || (Chart.registry && Chart.registry.plugins.get('zoom')))
-            ? { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
-                pan: { enabled: true, mode: 'x' } }
-            : undefined
-        },
-        scales: {
-          x: { grid: { color: '#eef1f6' }, ticks: { color: '#6b7787', maxTicksLimit: 7, autoSkip: true } },
-          y: { grid: { color: '#eef1f6' }, ticks: { color: '#6b7787', callback: function (v) { return money(v, cur); } } }
-        }
-      }
-    });
   }
+  if (!drops.length) {
+    body.innerHTML = '<tr><td colspan="3" class="py-2 text-slate-500">No price drops recorded yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = drops.reverse().map(function (d) {
+    return '<tr>' +
+      '<td class="py-2 text-slate-400">' + stamp(d.t) + '</td>' +
+      '<td class="py-2 font-bold text-white">' + money(d.price, cur) + '</td>' +
+      '<td class="py-2 text-right font-bold text-emerald-300">−' + money(d.saved, cur) + '</td>' +
+      '</tr>';
+  }).join('');
+}
 
-  // ---- time range -----------------------------------------------------------
-  function applyRange(r) {
-    state.range = r;
-    Array.prototype.forEach.call(document.querySelectorAll('.range'), function (b) {
-      b.classList.toggle('active', b.getAttribute('data-r') === r);
-    });
-    if (!state.chart) return;
-    if (r === 'reset' || r === 'all') { state.chart.resetZoom(); return; }
-    var days = r === '1y' ? 365 : r === '6m' ? 182 : r === '3m' ? 91 : 30;
+/* --- the chart ------------------------------------------------------------- */
+function chartPoints() {
+  var hist = state.history;
+  var cur = state.currency;
+  var range = state.range;
+  if (range !== 'all') {
+    var days = { '1y': 365, '6m': 182, '3m': 91, '1m': 30 }[range] || 0;
     var cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    var idx = 0;
-    for (var i = 0; i < state.history.length; i++) {
-      if (state.history[i].t && state.history[i].t >= cutoff) { idx = i; break; }
-      idx = i;
-    }
-    var total = state.history.length;
-    if (total < 2) return;
-    var start = Math.max(0, idx) / total;
-    var end = 1;
-    state.chart.zoomScale('x', { min: start, max: end }, 'default');
+    hist = hist.filter(function (h) { return h.t && h.t >= cutoff; });
+    if (!hist.length) hist = state.history;
   }
+  return {
+    labels: hist.map(function (h) { return stamp(h.t).split(',')[0]; }),
+    prices: hist.map(function (h) { return h.price; }),
+    cur: cur
+  };
+}
 
-  // ---- chart controls -------------------------------------------------------
-  $('fs').addEventListener('click', function () {
-    var box = $('chartBox');
-    if (document.fullscreenElement) { document.exitFullscreen && document.exitFullscreen(); }
-    else if (box.requestFullscreen) { box.requestFullscreen(); }
-    else if (box.webkitRequestFullscreen) { box.webkitRequestFullscreen(); }
-  });
-  $('dl').addEventListener('click', function () {
-    if (!state.chart) return;
-    var a = document.createElement('a');
-    a.href = state.chart.toBase64Image();
-    a.download = 'price-history.png';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  });
-  $('cp').addEventListener('click', function () {
-    if (!state.chart || !navigator.clipboard || !window.ClipboardItem) return;
-    var img = state.chart.toBase64Image();
-    fetch(img).then(function (r) { return r.blob(); }).then(function (b) {
-      navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]);
-    }).catch(function () {});
-  });
-  Array.prototype.forEach.call(document.querySelectorAll('.range'), function (b) {
-    b.addEventListener('click', function () { applyRange(b.getAttribute('data-r')); });
+function buildChart(hist, mrp, cur) {
+  var canvas = $('priceHistoryChart');
+  if (!canvas || !window.Chart) return;
+  if (state.chart) { state.chart.destroy(); state.chart = null; }
+
+  var pts = chartPoints();
+  var ctx = canvas.getContext('2d');
+  var gradient = ctx.createLinearGradient(0, 0, 0, 200);
+  gradient.addColorStop(0, 'rgba(0, 255, 136, 0.35)');
+  gradient.addColorStop(1, 'rgba(0, 255, 136, 0.0)');
+
+  var datasets = [];
+  if (mrp != null) {
+    datasets.push({
+      label: 'MRP',
+      data: pts.labels.map(function () { return mrp; }),
+      borderColor: '#ff2d55',
+      borderDash: [4, 4],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      fill: false
+    });
+  }
+  datasets.push({
+    label: 'Price',
+    data: pts.prices,
+    borderColor: '#00ff88',
+    backgroundColor: gradient,
+    borderWidth: 2,
+    fill: true,
+    tension: 0.25,
+    pointBackgroundColor: '#00ff88',
+    pointBorderColor: '#040d08',
+    pointRadius: pts.prices.length > 60 ? 0 : 3
   });
 
-  // ---- share / search -------------------------------------------------------
-  $('shareBtn').addEventListener('click', function () {
-    if (navigator.share) { navigator.share({ title: 'Price History', url: location.href }).catch(function () {}); }
-    else if (navigator.clipboard) { navigator.clipboard.writeText(location.href); }
+  state.chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: pts.labels, datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#08170f',
+          titleColor: '#00ff88',
+          bodyColor: '#ffffff',
+          borderColor: 'rgba(0, 255, 136, 0.4)',
+          borderWidth: 1,
+          callbacks: {
+            label: function (c) { return c.dataset.label + ': ' + money(c.parsed.y, pts.cur); }
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(0, 255, 136, 0.05)' }, ticks: { color: '#64748b', font: { size: 9, family: 'monospace' }, maxTicksLimit: 6 } },
+        y: { grid: { color: 'rgba(0, 255, 136, 0.05)' }, ticks: { color: '#64748b', font: { size: 9, family: 'monospace' }, callback: function (v) { return money(v, pts.cur); } } }
+      }
+    }
   });
-  $('go').addEventListener('click', function () {
-    var id = idFromInput($('q').value);
-    if (!id) { note('Paste a full Amazon or Flipkart product link, or a page URL that contains ?id=…', 'bad'); return; }
-    history.replaceState(null, '', '/?id=' + encodeURIComponent(id));
-    load(id);
-  });
-  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('go').click(); });
+}
 
-  // ---- boot -----------------------------------------------------------------
-  var id = idFromInput(location.search);
-  if (id) { $('q').value = location.href; load(id); }
+function filterGraph(period, btn) {
+  state.range = period;
+  document.querySelectorAll('.filter-btn').forEach(function (b) {
+    b.className = 'filter-btn flex-1 py-1 bg-slate-950 border border-emerald-500/30 text-emerald-400 rounded-lg text-[10px] transition text-center hover:bg-emerald-950';
+  });
+  if (btn) btn.className = 'filter-btn flex-1 py-1 bg-emerald-400 text-slate-950 font-black rounded-lg text-[10px] transition text-center shadow';
+  var p = state.product;
+  buildChart(state.history, (p && p.mrp != null && p.mrp > 0) ? p.mrp : null, state.currency);
+}
+
+/* --- load ------------------------------------------------------------------ */
+function load(id) {
+  hide($('note'));
+  return fetch(API + encodeURIComponent(id))
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.ok) {
+        hide($('result')); hide($('bottom'));
+        note(d && d.error === 'not_found'
+          ? 'No product with that id. Open this page from the bot’s Price History button.'
+          : 'Could not load that product just now. Please try again.');
+        return;
+      }
+      render(id, d.product, Array.isArray(d.history) ? d.history : []);
+    })
+    .catch(function () {
+      hide($('result')); hide($('bottom'));
+      note('Could not load the price history just now. Please try again.');
+    });
+}
+
+function runSearch() {
+  var id = idFromInput($('url-input').value) || idFromQuery();
+  if (!id) {
+    triggerToast('Paste a product link, or an id like amazon_B0G81TPT89.');
+    return;
+  }
+  $('btn-text').innerText = 'WAIT…';
+  history.replaceState(null, '', '/?id=' + encodeURIComponent(id));
+  load(id).then(function () { $('btn-text').innerText = 'CHECK'; });
+}
+function clearInput() { $('url-input').value = ''; }
+function shareLink() {
+  var url = location.href;
+  if (navigator.share) { navigator.share({ url: url }).catch(function () {}); return; }
+  if (navigator.clipboard) { navigator.clipboard.writeText(url).then(function () { triggerToast('Link copied'); }); return; }
+  triggerToast(url);
+}
+
+(function start() {
+  var id = idFromQuery();
+  if (id) { $('url-input').value = id; load(id); }
+  else note('Paste a product link or tap Check. Supported: Amazon and Flipkart.');
 })();
 </script>
 </body>

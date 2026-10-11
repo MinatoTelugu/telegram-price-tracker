@@ -63,20 +63,57 @@ const AMAZON_OK = {
   console.log('--- inert without credentials ---');
   delete process.env.OXYLABS_USERNAME;
   delete process.env.OXYLABS_PASSWORD;
+  delete process.env.OXYLABS_API_KEY;
   check('not configured with no credentials', oxy.oxylabsConfigured() === false);
   seen = [];
   check('and performs no request', (await oxy.lookupOxylabs({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' })) === null);
   check('...and nothing was sent', seen.length === 0);
 
-  console.log('--- Amazon: the buy box, as structured fields ---');
+  console.log('--- the Web API: a single key, sent as a Bearer token ---');
+  // The user's free-trial credential is a Web API key. It goes to
+  // webapi.oxylabs.io with a Bearer header — NOT to realtime.oxylabs.io, which
+  // is the other product and wants HTTP Basic.
+  process.env.OXYLABS_API_KEY = 'oxy_single_key';
+  check('configured with a single API key', oxy.oxylabsConfigured() === true);
+  check('...and the Web API is the one selected', oxy.usingWebApi() === true);
+
+  reply = { status: 200, data: { results: [{ json: AMAZON_OK.data.results[0].content, status_code: 200 }] } };
+  seen = [];
+  const keyed = await oxy.lookupOxylabs({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' });
+  check('the request goes to webapi.oxylabs.io',
+    /^https:\/\/webapi\.oxylabs\.io\//.test(seen[0].url), seen[0].url);
+  check('...and NOT to realtime.oxylabs.io', !/realtime\.oxylabs/.test(seen[0].url));
+  check('the endpoint is the dedicated amazon/product target',
+    /\/v1\/scrape\/amazon\/product$/.test(seen[0].url), seen[0].url);
+  check('authentication is a BEARER token',
+    seen[0].opts.headers.Authorization === 'Bearer oxy_single_key');
+  check('...and not Basic', !/^Basic /.test(seen[0].opts.headers.Authorization));
+  check('the ASIN is the query', seen[0].body.query === 'B0G81TPT89');
+  check('the domain is amazon.in', seen[0].body.domain === 'in');
+  check('json output is requested', Array.isArray(seen[0].body.output) && seen[0].body.output[0] === 'json');
+  check('the buy-box price survives', keyed.price === 21999);
+  check('the M.R.P. survives', keyed.mrp === 23999);
+  check('stock survives', keyed.inStock === true);
+
+  // The Web API nests the parsed object under `json`; the Scraper API puts it
+  // directly in `content`. Both envelopes must work.
+  const nested = oxy.fromAmazonContent({ json: { price_buybox: 21999, price_initial: 23999, stock: 'In stock.' } });
+  check('a Web API json-nested payload is unwrapped', nested.price === 21999 && nested.mrp === 23999);
+  const flat = oxy.fromAmazonContent({ price_buybox: 21999, price_initial: 23999, stock: 'In stock.' });
+  check('a Scraper API flat payload still works', flat.price === 21999);
+
+  console.log('--- the Web Scraper API: username + password, Basic auth ---');
+  delete process.env.OXYLABS_API_KEY;
   process.env.OXYLABS_USERNAME = 'oxy_user';
   process.env.OXYLABS_PASSWORD = 'oxy_pass';
   check('configured with username + password', oxy.oxylabsConfigured() === true);
+  check('...and the Web API is NOT selected', oxy.usingWebApi() === false);
 
   reply = AMAZON_OK;
   seen = [];
   const a = await oxy.lookupOxylabs({ url: 'https://www.amazon.in/dp/B0G81TPT89', marketplace: 'amazon' });
 
+  check('the request goes to realtime.oxylabs.io', /realtime\.oxylabs\.io/.test(seen[0].url), seen[0].url);
   check('the source is amazon_product', seen[0].body.source === 'amazon_product');
   check('the ASIN is passed as the query', seen[0].body.query === 'B0G81TPT89');
   check('parsing is requested', seen[0].body.parse === true);

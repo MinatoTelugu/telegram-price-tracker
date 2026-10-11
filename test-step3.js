@@ -39,6 +39,17 @@ function docRef(coll, id) {
     async set(data) {
       store.set(key, applyOps(store.get(key), data));
     },
+    // Firestore's create(): writes only when the document is NOT already there,
+    // and throws otherwise. upsertUser relies on exactly that atomicity to stop
+    // two /start calls both announcing the same user.
+    async create(data) {
+      if (store.get(key) !== undefined) {
+        const err = new Error('6 ALREADY_EXISTS');
+        err.code = 6;
+        throw err;
+      }
+      store.set(key, applyOps(undefined, data));
+    },
   };
 }
 

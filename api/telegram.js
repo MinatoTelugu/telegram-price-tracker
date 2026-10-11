@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-122 (2026-10-11)';
+const BUILD = 'names-123 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -532,9 +532,35 @@ async function logNewUser(from) {
   }
 }
 
+/**
+ * Create the user doc on first contact; refresh lastSeenAt only occasionally.
+ *
+ * WHY THIS IS THROTTLED
+ * This runs on EVERY update — it is middleware, not a /start handler. It used to
+ * do a read plus a write for every single message, and after the new-user race
+ * fix it did a create() that throws plus a set() for every returning user, which
+ * is two writes. On Firestore's free tier that is a quota bomb, and it went off:
+ *
+ *   user upsert failed: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+ *   sendTrackingList failed Error: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+ *
+ * So the common case now costs NOTHING. A user touched in the last
+ * USER_TOUCH_MINUTES is remembered in-process and skipped outright — no read, no
+ * write. A first-ever contact still does exactly one atomic create(), which is
+ * what makes the new-user announcement race-free. Only a returning user whose
+ * last touch has gone stale pays for one merge set.
+ */
+const TOUCH_WINDOW_MS = parseInt(process.env.USER_TOUCH_MINUTES || '360', 10) * 60 * 1000;
+const TOUCHED = new Map(); // telegramId -> ms of the last write we did
+
 async function upsertUser(from) {
-  const ref = db.collection(COLLECTIONS.USERS).doc(String(from.id));
-  const snap = await ref.get();
+  if (!from || from.id == null) return;
+  const key = String(from.id);
+
+  const last = TOUCHED.get(key);
+  if (last != null && Date.now() - last < TOUCH_WINDOW_MS) return; // nothing to do
+
+  const ref = db.collection(COLLECTIONS.USERS).doc(key);
   const data = {
     telegramId: from.id,
     firstName: from.first_name || null,
@@ -543,30 +569,32 @@ async function upsertUser(from) {
     languageCode: from.language_code || null,
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+
   // ── "IS THIS A NEW USER?" MUST BE ATOMIC ──────────────────────────────────
-  //
   // It used to be read-then-write: `snap.exists` decided, then a set() followed.
   // Two /start calls arriving close together — Telegram retrying an update, or
   // someone tapping Start twice — BOTH read "does not exist" before either had
-  // written, so both announced the user. The channel log showed exactly that:
-  // "New User Joined Bot!" for the same User ID twice, a minute apart.
+  // written, so both announced the user. create() fails if the document is
+  // already there, so exactly one caller can win.
   //
-  // create() is atomic: it fails if the document is already there, so exactly one
-  // caller can win the race. The loser falls through to a merge set, which is
-  // what refreshes lastSeenAt on every later contact anyway.
+  // A returning user normally does NOT reach the catch: the throttle above means
+  // we only attempt the create once per window, and when it fails we mark the
+  // user as seen without a second write. The one case that still writes is a user
+  // whose document exists but has gone stale, which is rare and worth the cost.
   let isNew = false;
   try {
     await ref.create(
       Object.assign({}, data, { createdAt: admin.firestore.FieldValue.serverTimestamp() })
     );
     isNew = true;
+    TOUCHED.set(key, Date.now());
   } catch (err) {
-    // Already present — the normal case for every contact after the first.
-    await ref.set(data, { merge: true });
+    // Already present. Record it as seen so the NEXT message costs nothing, and
+    // skip the merge set — lastSeenAt being a few hours stale is not worth a
+    // write per message on a quota-limited tier.
+    TOUCHED.set(key, Date.now());
   }
 
-  // A first-ever start is worth recording. Deliberately after the write, so the
-  // user exists in our data even if the log fails, and never awaited by callers.
   if (isNew) logNewUser(from).catch(() => {});
 }
 

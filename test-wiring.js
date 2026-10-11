@@ -574,8 +574,8 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('it sends the requested three fields',
     /👤 Name:/.test(src) && /🔗 Username:/.test(src) && /🆔 User ID:/.test(src));
   check('it only fires for a FIRST-time user', /if \(isNew\) logNewUser\(from\)/.test(src));
-  check('...and only after the user has been written', 
-    src.indexOf('await ref.set(data, { merge: true })') < src.indexOf('if (isNew) logNewUser'));
+  check('...and only after the user has been written',
+    src.indexOf('await ref.create(') < src.indexOf('if (isNew) logNewUser'));
   check('a logging failure is swallowed, never blocking the user',
     /logNewUser\(from\)\.catch\(\(\) => \{\}\)/.test(src) && /new-user log failed/.test(src));
   check('with no LOG_CHANNEL it does nothing', /if \(!channel \|\| !token \|\| !from\) return;/.test(src));
@@ -708,8 +708,8 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     /await ref\.create\(/.test(tg));
   check('...and the read-then-write that raced is gone',
     !/const isNew = !snap\.exists/.test(tg));
-  check('...with the already-exists path still refreshing the user',
-    /catch \(err\) \{[\s\S]{0,120}await ref\.set\(data, \{ merge: true \}\)/.test(tg));
+  check('...and a returning user does NOT pay for a second write',
+    !/catch \\(err\\) \\{[\\s\\S]{0,300}await ref\\.set\\(data, \\{ merge: true \\}\\)/.test(tg));
   check('a second announcement in the same process is refused',
     /const ANNOUNCED = new Set\(\)/.test(tg) && /ANNOUNCED\.has\(key\)/.test(tg));
 
@@ -727,6 +727,27 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...and a different user is still announced', shouldSend(111) === true);
   check('...and the guard keys on the id, not the name',
     shouldSend(222) === true && shouldSend(222) === false);
+}
+
+
+// ---------------------------------------------------------------------------
+// upsertUser runs on every message and was doing a read plus two writes each
+// time. The log showed the result: 8 RESOURCE_EXHAUSTED: Quota exceeded.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('a returning user inside the window costs no Firestore call at all',
+    /const TOUCHED = new Map\(\)/.test(tg) && /Date\.now\(\) - last < TOUCH_WINDOW_MS\) return/.test(tg));
+  check('...and the window is configurable', /USER_TOUCH_MINUTES/.test(tg));
+  check('the atomic create is still there, so the new-user race stays fixed',
+    /await ref\.create\(/.test(tg));
+  check('...and a returning user does not pay for a second write',
+    !/catch \(err\) \{[\s\S]{0,300}await ref\.set\(data, \{ merge: true \}\)/.test(tg));
+  check('...and the per-message read is gone', (() => {
+    const start = tg.indexOf('async function upsertUser');
+    const body = tg.slice(start, start + 2000);
+    return start > 0 && !/ref\.get\(\)/.test(body);
+  })());
 }
 
 

@@ -566,6 +566,35 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('both posts still attach the keyboard', (deals.match(/reply_markup/g) || []).length >= 2);
 }
 
+// ---------------------------------------------------------------------------
+// The cron self-corrects each product's history the moment it has a trusted
+// reading. If this link breaks, bad readings quietly pile up again.
+// ---------------------------------------------------------------------------
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the cron runs the self-correction pass',
+    /selfCleanProduct\(/.test(cron));
+  check('...only after a TRUSTED reading, never after a guess',
+    /if \(!result\.guess\) \{[\s\S]{0,400}selfCleanProduct/.test(cron));
+  check('...passing the price we just validated as the reference',
+    /trustedPrice: newPrice/.test(cron));
+  check('...and the MRP, so an impossible price is caught too',
+    /mrp: result\.mrp != null \? result\.mrp : data\.mrp/.test(cron));
+  check('...and a failure there cannot break the price check',
+    /self-clean failed for /.test(cron) && /require\('\.\.\/lib\/selfClean'\)/.test(cron));
+  check('a guessed reading is never recorded as history at all',
+    /if \(!result\.guess\) \{[\s\S]{0,200}PRICE_HISTORY/.test(cron));
+
+  const sc = fs.readFileSync(__dirname + '/lib/selfClean.js', 'utf8');
+  check('the newest reading is never deleted by the pass',
+    /p\.id !== newest\.id/.test(sc));
+  check('...and lastPrice is re-pointed at a surviving reading',
+    /lastPrice: newest\.price/.test(sc));
+  check('...and the pass swallows its own errors',
+    /catch \(err\) \{[\s\S]{0,200}return null;/.test(sc));
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

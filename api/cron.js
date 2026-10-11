@@ -510,6 +510,39 @@ async function processProduct(doc) {
   if (result.resolvedUrl && result.resolvedUrl !== data.fetchUrl) update.fetchUrl = result.resolvedUrl;
   await doc.ref.set(update, { merge: true });
 
+  // SELF-CORRECTION, the moment we have something to correct against.
+  //
+  // The reading we just recorded is trusted (a labelled price, one anchored on
+  // the M.R.P., or the hosted API's buybox) — that is the trigger. This product's
+  // history is now checked against it and against the MRP, and whatever they
+  // contradict is removed: readings above the MRP or far under it, excursions
+  // that bounce back, and runs sitting away from the trusted price with the
+  // readings on both sides back at it.
+  //
+  // It runs here, per product, so no one has to clean products one URL at a
+  // time. A GUESS never triggers it — only a price we can stand behind does.
+  // Never awaited in a way that can fail the check: selfCleanProduct swallows its
+  // own errors and returns null.
+  if (!result.guess) {
+    try {
+      const { selfCleanProduct } = require('../lib/selfClean');
+      const cleanReport = await selfCleanProduct({
+        productId: doc.id,
+        trustedPrice: newPrice,
+        mrp: result.mrp != null ? result.mrp : data.mrp,
+        log: (line) => console.log(line),
+      });
+      if (cleanReport && cleanReport.removed) {
+        console.log(
+          'cron: ' + doc.id + ' self-corrected — removed ' + cleanReport.removed +
+            ' bad readings, kept ' + cleanReport.kept
+        );
+      }
+    } catch (err) {
+      console.warn('cron: self-clean failed for ' + doc.id + ' (' + err.message + '); history untouched');
+    }
+  }
+
   await pruneOldHistory(doc.ref);
 
   // Alerts: price drops, price increases, and back-in-stock.

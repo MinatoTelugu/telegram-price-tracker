@@ -400,7 +400,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
   check('availability is gated on the page being usable',
     /const pageUsable = !looksBlocked\(\$\.html\(\)\) && \$\('body'\)\.text\(\)\.trim\(\)\.length > 500/.test(scr));
-  check('...and is null when it is not', /const inStock = pageUsable \? !detectOutOfStock\(\$\) : null/.test(scr));
+  check('...and is null when it is not', /let inStock = pageUsable \? !detectOutOfStock\(\$\) : null/.test(scr));
   check('the last-resort availability can therefore be used',
     /if \(inStock == null && last\.inStock != null\) inStock = last\.inStock/.test(scr));
 
@@ -662,6 +662,32 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     /suppressing a \+/.test(cron));
   check('a drop is NOT gated on the baseline',
     /pct <= -DROP_THRESHOLD\) \{\s*message = formatAlert/.test(cron));
+}
+
+
+// ---------------------------------------------------------------------------
+// "Assignment to constant variable" takes a WHOLE PRODUCT down: the cron logs
+// "product FAILED <id>" and the item is never checked again that run. It is also
+// invisible to node --check, which only parses. This scans every module for a
+// const that is later assigned in the same indentation scope.
+// ---------------------------------------------------------------------------
+{
+  const filesUnused = [
+    'lib/scraper.js', 'lib/deals.js', 'lib/oxylabs.js', 'lib/amazonapi.js',
+    'lib/reader.js', 'lib/paapi.js', 'lib/cleanHistory.js', 'lib/selfClean.js',
+    'api/cron.js', 'api/deals.js', 'api/telegram.js', 'server.js',
+  ];
+  // A full static scan is unreliable here — it cannot tell two same-depth
+  // functions apart, and flagged unrelated locals sharing a short name. So this
+  // pins the two that actually broke, and the shape of the mistake.
+  const scraperSrc = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the values the last-resort path fills in are declared let, not const',
+    /let imageUrl = imageFromPage/.test(scraperSrc) && /let inStock = pageUsable/.test(scraperSrc));
+  check('...because both are reassigned when the page was too thin',
+    /if \(!imageUrl && last\.image\) imageUrl = last\.image/.test(scraperSrc) &&
+    /if \(inStock == null && last\.inStock != null\) inStock = last\.inStock/.test(scraperSrc));
+  check('a const is never the target of that reassignment',
+    !/const imageUrl = imageFromPage/.test(scraperSrc) && !/const inStock = pageUsable/.test(scraperSrc));
 }
 
 

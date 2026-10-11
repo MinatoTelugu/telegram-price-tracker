@@ -490,6 +490,40 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...and the independent figure wins when they disagree', /confirmedPrice = again\.price;/.test(cron));
 }
 
+// --- /stats and the new-user log ---------------------------------------------
+{
+  const src = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+
+  // /stats
+  const at = src.indexOf("bot.command('stats'");
+  const stats = src.slice(at, src.indexOf('\n  });', at));
+  check('there is a /stats command', at > -1);
+  check('it checks the admin', /resolveAdminId\(ctx\)/.test(stats));
+  check('it returns SILENTLY for a non-admin (no acknowledgement at all)',
+    /if \(!adminId \|\| String\(ctx\.from\.id\) !== String\(adminId\)\) return; \/\/ silent/.test(stats));
+  check('it counts the users', /db\.collection\(COLLECTIONS\.USERS\)\.get\(\)/.test(stats));
+  check('it reports the total', /snap\.size/.test(stats));
+  check('it does not gate on a channel join anywhere',
+    !/force|join.*channel|subscri.*required/i.test(stats));
+
+  // The new-user log
+  check('there is a new-user logger', /async function logNewUser/.test(src));
+  check('it reads LOG_CHANNEL', /process\.env\.LOG_CHANNEL/.test(src));
+  check('it sends the requested three fields',
+    /👤 Name:/.test(src) && /🔗 Username:/.test(src) && /🆔 User ID:/.test(src));
+  check('it only fires for a FIRST-time user', /if \(isNew\) logNewUser\(from\)/.test(src));
+  check('...and only after the user has been written', 
+    src.indexOf('await ref.set(data, { merge: true })') < src.indexOf('if (isNew) logNewUser'));
+  check('a logging failure is swallowed, never blocking the user',
+    /logNewUser\(from\)\.catch\(\(\) => \{\}\)/.test(src) && /new-user log failed/.test(src));
+  check('with no LOG_CHANNEL it does nothing', /if \(!channel \|\| !token \|\| !from\) return;/.test(src));
+
+  const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
+  check('.env.example documents LOG_CHANNEL', /LOG_CHANNEL=/.test(env));
+  check('...and states there is no force-subscribe',
+    /NO channel-join lock or force-subscribe/.test(env));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

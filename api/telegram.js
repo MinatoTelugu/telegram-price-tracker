@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-98 (2026-10-11)';
+const BUILD = 'names-99 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -493,6 +493,34 @@ function extractUrl(text) {
 }
 
 /** Create the user doc on first contact, refresh lastSeenAt on every contact. */
+/**
+ * Announce a first-time user in LOG_CHANNEL.
+ *
+ * Fire-and-forget and fully swallowed: a logging problem must never stop someone
+ * using the bot, and there is no channel-join lock anywhere — this is a record,
+ * not a gate.
+ */
+async function logNewUser(from) {
+  const channel = String(process.env.LOG_CHANNEL || '').trim();
+  const token = process.env.BOT_TOKEN;
+  if (!channel || !token || !from) return;
+  const lines = [
+    '🚨 <b>New User Joined Bot!</b>',
+    '👤 Name: ' + escapeHtml(from.first_name || '—'),
+    '🔗 Username: ' + (from.username ? '@' + escapeHtml(from.username) : '—'),
+    '🆔 User ID: <code>' + escapeHtml(String(from.id)) + '</code>',
+  ];
+  try {
+    await axios.post(
+      'https://api.telegram.org/bot' + token + '/sendMessage',
+      { chat_id: channel, text: lines.join('\n'), parse_mode: 'HTML' },
+      { timeout: 8000 }
+    );
+  } catch (err) {
+    console.warn('new-user log failed:', err.message);
+  }
+}
+
 async function upsertUser(from) {
   const ref = db.collection(COLLECTIONS.USERS).doc(String(from.id));
   const snap = await ref.get();
@@ -504,8 +532,13 @@ async function upsertUser(from) {
     languageCode: from.language_code || null,
     lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
   };
-  if (!snap.exists) data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+  const isNew = !snap.exists;
+  if (isNew) data.createdAt = admin.firestore.FieldValue.serverTimestamp();
   await ref.set(data, { merge: true });
+
+  // A first-ever start is worth recording. Deliberately after the write, so the
+  // user exists in our data even if the log fails, and never awaited by callers.
+  if (isNew) logNewUser(from).catch(() => {});
 }
 
 /**
@@ -1799,6 +1832,46 @@ function registerHandlers(bot) {
     } catch (err) {
       console.error('check command failed:', err);
       await ctx.reply('The check failed: ' + String(err.message).slice(0, 200));
+    }
+  });
+
+  // /stats — ADMIN ONLY, and SILENT for everyone else (not even an acknowledgement,
+  // so a non-admin cannot tell the command exists).
+  bot.command('stats', async (ctx) => {
+    try {
+      if (!ctx.from) return;
+      const adminId = await resolveAdminId(ctx);
+      if (!adminId || String(ctx.from.id) !== String(adminId)) return; // silent
+      if (!db) {
+        await ctx.reply(DB_DOWN);
+        return;
+      }
+
+      const snap = await db.collection(COLLECTIONS.USERS).get();
+      const total = snap.size;
+
+      // Active means: has at least one product still subscribed.
+      let active = 0;
+      try {
+        const products = await db.collection(COLLECTIONS.PRODUCTS).get();
+        const holders = new Set();
+        products.forEach((d) => {
+          const subs = d.data() && d.data().subscribers;
+          if (Array.isArray(subs)) subs.forEach((u) => holders.add(String(u)));
+        });
+        active = holders.size;
+      } catch (err) {
+        console.warn('stats: could not count active users:', err.message);
+      }
+
+      await ctx.reply(
+        '📊 <b>Bot statistics</b>\n\n' +
+          '👥 Total users: <b>' + total + '</b>\n' +
+          '📦 Users tracking something: <b>' + active + '</b>',
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      console.error('stats failed:', err);
     }
   });
 

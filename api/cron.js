@@ -44,9 +44,15 @@ const COLLECTIONS = (fb && fb.COLLECTIONS) || { PRODUCTS: 'products', PRICE_HIST
 const BATCH_SIZE = parseInt(process.env.CRON_BATCH_SIZE || '20', 10);
 const DROP_THRESHOLD = parseFloat(process.env.PRICE_DROP_THRESHOLD_PERCENT || '1');
 const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCENT || '5');
-// A move this large, from a source we cannot verify against the store, is
-// re-read once before it is believed. See confirmLargeMove().
-const CONFIRM_THRESHOLD = parseFloat(process.env.PRICE_CONFIRM_THRESHOLD_PERCENT || '10');
+// Any move at least this large, from a source we cannot verify against the store,
+// is checked against an INDEPENDENT source before it is believed.
+//
+// It was 10%, and that was too high: the reported product flipped between ₹21,999
+// and ₹19,999 — 9.1% — which slipped under the gate, so the wrong value was
+// recorded and shown. A 4.5% flip to ₹22,999 did too. The false moves are small
+// percentages, so the gate has to be small as well. A confirmation costs one
+// extra lookup, and only when the price has actually moved.
+const CONFIRM_THRESHOLD = parseFloat(process.env.PRICE_CONFIRM_THRESHOLD_PERCENT || '3');
 const HISTORY_DAYS = 30;
 // The history sanity pass runs by itself, once a day, so a polluted history is
 // repaired without anyone having to remember a command. Set CLEAN_HOUR=-1 to

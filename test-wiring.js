@@ -419,6 +419,15 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 {
   const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
   check('there is a confirmation threshold', /PRICE_CONFIRM_THRESHOLD_PERCENT/.test(cron));
+  // The gate must be SMALL, because the false moves are small percentages.
+  const thr = parseFloat((cron.match(/PRICE_CONFIRM_THRESHOLD_PERCENT \|\| '(\d+)'/) || [])[1]);
+  check('the gate is at most 5%', Number.isFinite(thr) && thr <= 5);
+  const caught = [[21999, 19999], [19999, 21999], [21999, 22999]];
+  for (const [a, b] of caught) {
+    const pct = Math.abs(((b - a) / a) * 100);
+    check('a ' + pct.toFixed(1) + '% move is confirmed', pct >= thr);
+  }
+  check('a sub-1% drift is left alone', Math.abs(((21800 - 21999) / 21999) * 100) < thr);
   check('a large move triggers a re-read', /Math\.abs\(\(\(confirmedPrice - oldPrice\) \/ oldPrice\) \* 100\) >= CONFIRM_THRESHOLD/.test(cron));
   check('the re-read can reach the page for non-Amazon stores', /again = await fetchProduct\(/.test(cron));
   check('a disagreeing re-read replaces the price', /confirmedPrice = again\.price;/.test(cron));

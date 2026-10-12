@@ -774,6 +774,23 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// Two instances were alive at once — the log showed three "Polling conflict"
+// lines — and each ran its own cron, doubling every database write.
+// ---------------------------------------------------------------------------
+{
+  const server = fs.readFileSync(__dirname + '/server.js', 'utf8');
+  check('a duplicate instance stands its scheduled jobs down',
+    /function setJobsPaused/.test(server) && /setJobsPaused\(true\)/.test(server));
+  check('...and the instance that owns the poll brings them back',
+    /setJobsPaused\(false\)/.test(server));
+  check('...the cron handles are kept so they can be stopped',
+    /let priceTask = null/.test(server) && /priceTask = cron\.schedule/.test(server));
+  check('...and the startup runs respect the pause',
+    (server.match(/if \(jobsPaused\) return;/g) || []).length >= 2);
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

@@ -296,6 +296,36 @@ async function warmUp() {
   console.log('Warm-up complete for', targets.length, 'hosts');
 }
 
+// Cron task handles, so a duplicate instance can stand them down.
+let priceTask = null;
+let dealsTask = null;
+let jobsPaused = false;
+
+/**
+ * Stand the scheduled jobs down (or bring them back) on the instance that does
+ * NOT own the Telegram poll. Two instances running the same cron is the single
+ * most expensive thing this bot can do.
+ */
+function setJobsPaused(paused) {
+  if (paused === jobsPaused) return;
+  jobsPaused = paused;
+  for (const t of [priceTask, dealsTask]) {
+    if (!t) continue;
+    try {
+      if (paused && typeof t.stop === 'function') t.stop();
+      else if (!paused && typeof t.start === 'function') t.start();
+    } catch (err) {
+      console.warn('could not ' + (paused ? 'pause' : 'resume') + ' a scheduled job: ' + err.message);
+    }
+  }
+  console.log(
+    paused
+      ? 'Another instance owns the poll — this one has stood its scheduled jobs DOWN, ' +
+        'so the database is not written twice.'
+      : 'This instance owns the poll — scheduled jobs are RUNNING.'
+  );
+}
+
 async function startPolling() {
   // Never allow two pollers inside one process: a retry must stop the previous
   // one first, otherwise the bot fights itself and Telegram returns 409 forever.
@@ -326,6 +356,8 @@ async function startPolling() {
   console.log('Starting Telegram polling...');
   try {
     await bot.launch();
+    // The poll is ours, so the jobs are ours.
+    setJobsPaused(false);
     console.log('Bot started in long-polling mode.');
     return;
   } catch (err) {
@@ -336,6 +368,9 @@ async function startPolling() {
           'Set this service to exactly ONE instance, and make sure there is no second ' +
           'deployment of it. Retrying in 60 seconds...'
       );
+      // The other instance owns the poll, so it owns the cron too. Standing down
+      // here is what stops the database being written twice.
+      setJobsPaused(true);
       setTimeout(() => {
         startPolling().catch((e) => console.error('retry failed:', e.message));
       }, 60000);
@@ -363,11 +398,23 @@ async function startPolling() {
   const priceCron = process.env.PRICE_CRON || DEFAULT_PRICE_CRON;
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
 
-  cron.schedule(priceCron, () => {
+  // ── ONLY THE INSTANCE THAT OWNS THE POLL RUNS THE JOBS ───────────────────
+  //
+  // Two instances of this bot were alive at once. The log proved it — three
+  // "Polling conflict: ANOTHER copy of this bot is polling with the same token"
+  // lines — and the cost was not just duplicate messages: each instance ran its
+  // OWN cron, so every price check, every history write and every self-clean
+  // happened TWICE. That is the Firestore quota being spent at double rate.
+  //
+  // Telegram already decides which instance is the real one: whichever holds the
+  // long poll, the other gets 409. So the loser stands its jobs down. If the
+  // winner dies, the loser's next retry succeeds, it becomes the owner, and the
+  // jobs come back on — so this costs nothing in resilience.
+  priceTask = cron.schedule(priceCron, () => {
     runJob('cron').catch((err) => console.error('price check failed:', err.message));
   });
 
-  cron.schedule(dealsCron, () => {
+  dealsTask = cron.schedule(dealsCron, () => {
     runJob('deals').catch((err) => console.error('deals failed:', err.message));
   });
 
@@ -377,9 +424,11 @@ async function startPolling() {
   // without this the first price check could be hours away and the price
   // history page would look empty.
   setTimeout(() => {
+    if (jobsPaused) return; // a duplicate instance must not write to the database
     runJob('cron').catch((err) => console.error('startup price check failed:', err.message));
   }, 60 * 1000);
   setTimeout(() => {
+    if (jobsPaused) return;
     runJob('deals').catch((err) => console.error('startup deals failed:', err.message));
   }, 150 * 1000);
 

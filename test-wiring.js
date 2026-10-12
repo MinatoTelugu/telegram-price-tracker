@@ -771,6 +771,10 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const m = tg.match(/function isQuotaError\(err\) \{[\s\S]*?\n}/);
   check('the quota classifier exists', !!m);
   if (m) {
+    // The classifier now delegates to the shared guard, so the guard has to be
+    // in scope for the eval — and it is the real one, not a stub, so this still
+    // proves the classifier works end to end.
+    const quotaGuard = require(__dirname + '/lib/quotaGuard.js');
     eval(m[0].replace(/^function /, 'var isQuotaError = function '));
     check('gRPC code 8 is a quota error', isQuotaError({ code: 8 }) === true);
     check('RESOURCE_EXHAUSTED text is a quota error',

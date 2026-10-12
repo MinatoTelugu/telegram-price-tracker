@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-135 (2026-10-12)';
+const BUILD = 'names-136 (2026-10-12)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -45,6 +45,7 @@ const { convertWithProvider, converterConfigured, convertRaw } = require('../lib
 const { fetchProduct, resolveProductName, firstRealPrice, buyboxText } = require('../lib/scraper');
 const { fetchMetadata } = require('../lib/metadata');
 const { fetchReadablePage } = require('../lib/reader');
+const quotaGuard = require('../lib/quotaGuard');
 const { lookupAsin, amazonApiConfigured } = require('../lib/amazonapi');
 const { expandShortLink, isShortLink } = require('../lib/shortlink');
 
@@ -346,6 +347,26 @@ async function sendTrackingList(ctx) {
       return;
     }
 
+    // If the quota breaker is open, a query now will fail AND retry itself. Show
+    // whatever we last saved instead of making a request we know will be refused.
+    if (quotaGuard.isBlocked()) {
+      if (cached) {
+        const when = new Date(cached.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        await ctx.reply(
+          cached.text + '\n\n<i>(Last saved copy — the database is at its limit right now. Taken ' + when + '.)</i>',
+          cached.opts
+        );
+        return;
+      }
+      await ctx.reply(
+        '⚠️ <b>Database limit reached</b>\n\n' +
+          'The database is at its daily limit, so I cannot read your list at the moment. ' +
+          'It resets on its own — please try again later.',
+        { parse_mode: 'HTML' }
+      );
+      return;
+    }
+
     // Only ACTIVELY tracked products. Stopped products are not listed at all,
     // and they are not counted in the total.
     const activeSnap = await db
@@ -499,6 +520,7 @@ async function sendTrackingList(ctx) {
     LIST_CACHE.set(uid, { text, opts, at: Date.now() });
     await ctx.reply(text, opts);
   } catch (err) {
+    quotaGuard.noteError(err);
     console.error('sendTrackingList failed', err);
     // NEVER LEAVE THE USER STARING AT NOTHING.
     //
@@ -541,10 +563,11 @@ async function sendTrackingList(ctx) {
  * between client versions, so both the code and the text are checked.
  */
 function isQuotaError(err) {
-  if (!err) return false;
-  if (err.code === 8 || err.code === 'RESOURCE_EXHAUSTED') return true;
-  return /RESOURCE_EXHAUSTED|Quota exceeded|quota/i.test(String(err.message || ''));
+  // One definition, shared with the breaker, so "is this a quota error?" cannot
+  // mean two different things in two places.
+  return quotaGuard.isQuotaError(err);
 }
+
 
 /**
  * Return the first token that looks like a URL — ANY url, not just
@@ -2404,6 +2427,7 @@ function registerHandlers(bot) {
         );
       }
     } catch (err) {
+      quotaGuard.noteError(err);
       console.error('text handler failed', err);
       // Turn the raw Firestore error into something actionable for the user.
       const msg = String((err && err.message) || err);

@@ -31,6 +31,7 @@ const { fetchMetadata } = require('../lib/metadata');
 // (on Koyeb a throw here would kill the whole app at startup).
 let fb = null;
 let fbError = null;
+const quotaGuard = require('../lib/quotaGuard');
 try {
   fb = require('../lib/firebase');
 } catch (err) {
@@ -937,6 +938,11 @@ const runCron = async (req, res) => {
             (r && r.alerts ? ' alerts=' + r.alerts : '')
         );
       } catch (err) {
+        quotaGuard.noteError(err);
+        if (quotaGuard.isBlocked()) {
+          console.warn('cron: quota guard tripped — stopping this run early instead of failing through the rest');
+          break;
+        }
         console.error('cron: product FAILED ' + doc.id + ' — ' + err.message);
         results.push({ id: doc.id, status: 'error', reason: err.message });
       }
@@ -963,6 +969,7 @@ const runCron = async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify(summary));
   } catch (err) {
+    quotaGuard.noteError(err);
     console.error('cron failed', err);
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');
@@ -989,6 +996,15 @@ const handler = async (req, res) => {
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ ok: true, skipped: 'already_running' }));
+    return;
+  }
+  // If the quota is spent, a run reads nothing and writes nothing — it fails
+  // product by product, retrying each one. Refuse at the door instead.
+  if (quotaGuard.isBlocked()) {
+    console.warn('cron: quota guard is open — skipping this run rather than failing through every product');
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true, skipped: 'quota_guard_open' }));
     return;
   }
   cronInFlight = true;

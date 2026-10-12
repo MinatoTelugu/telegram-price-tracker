@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-127 (2026-10-11)';
+const BUILD = 'names-128 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1518,15 +1518,6 @@ function registerHandlers(bot) {
             ? 'set'
             : 'not set')
       );
-      lines.push(
-        'Oxylabs (primary scraper): ' +
-          (process.env.OXYLABS_API_KEY
-            ? 'Web API key set (Bearer -> webapi.oxylabs.io) — Amazon uses the structured buy-box parser'
-            : process.env.OXYLABS_USERNAME && process.env.OXYLABS_PASSWORD
-            ? 'Web Scraper API credentials set (Basic -> realtime.oxylabs.io)'
-            : 'NOT set — falling back to the reader/hosted API')
-      );
-      lines.push('WEB_APP_URL: ' + (process.env.WEB_APP_URL || 'not set'));
       lines.push(
         'AFFILIATERS_TOKEN: ' +
           (process.env.AFFILIATERS_TOKEN ? 'set' : 'NOT set — Flipkart/other links will not be converted')

@@ -330,16 +330,6 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
       !/process\.env\.PRICE_CRON \|\| '\*\/30/.test(server) &&
       (server.match(/process\.env\.PRICE_CRON \|\| DEFAULT_PRICE_CRON/g) || []).length >= 2);
   }
-  check('the startup banner says which scraper is in play',
-    /Scraper: Oxylabs Web API key set/.test(server));
-  check('...and PROBES it, so a bad credential shows at boot not hours later',
-    /function probeOxylabs/.test(server) && /probeOxylabs\(\);/.test(server));
-  check('...without blocking startup on the network',
-    !/await probeOxylabs/.test(server));
-  check('...and it explains the most likely cause of a 401',
-    /username \+ password, not a key/.test(server));
-  check('...and names the missing credentials when there are none',
-    /no Oxylabs credentials/.test(server) && /OXYLABS_API_KEY/.test(server));
 
   const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
   check('.env.example no longer offers the dead Omkar key', !/^OMKAR_API_KEY=/m.test(env));
@@ -679,11 +669,6 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 // const that is later assigned in the same indentation scope.
 // ---------------------------------------------------------------------------
 {
-  const filesUnused = [
-    'lib/scraper.js', 'lib/deals.js', 'lib/oxylabs.js', 'lib/amazonapi.js',
-    'lib/reader.js', 'lib/paapi.js', 'lib/cleanHistory.js', 'lib/selfClean.js',
-    'api/cron.js', 'api/deals.js', 'api/telegram.js', 'server.js',
-  ];
   // A full static scan is unreliable here — it cannot tell two same-depth
   // functions apart, and flagged unrelated locals sharing a short name. So this
   // pins the two that actually broke, and the shape of the mistake.

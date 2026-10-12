@@ -835,7 +835,7 @@ async function maybeAutoClean() {
   }
 }
 
-module.exports = async (req, res) => {
+const runCron = async (req, res) => {
   // Auth: Vercel Cron sends "Authorization: Bearer $CRON_SECRET".
   const secret = process.env.CRON_SECRET;
   if (secret) {
@@ -942,8 +942,40 @@ module.exports = async (req, res) => {
   }
 };
 
-// Exposed for tests.
-module.exports.isFlipkartShortLink = isFlipkartShortLink;
+/**
+ * One cron run at a time.
+ *
+ * Two overlapping runs cost twice the reads and writes and buy nothing: both
+ * would check the same products and both would write history. Overlap happens
+ * more easily than it looks — a slow sweep still going when the next schedule
+ * tick lands, a retried /api/cron, or a second instance that has not yet stood
+ * its jobs down. This is the last place where the pipeline could be entered
+ * twice at once, so it is closed here rather than trusted to the callers.
+ */
+let cronInFlight = false;
+let cronLastFinishedAt = 0;
+
+const handler = async (req, res) => {
+  if (cronInFlight) {
+    console.warn('cron: a run is already in flight — skipping this one rather than stacking a second');
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: true, skipped: 'already_running' }));
+    return;
+  }
+  cronInFlight = true;
+  try {
+    return await runCron(req, res);
+  } finally {
+    cronInFlight = false;
+    cronLastFinishedAt = Date.now();
+  }
+};
+
+module.exports = handler;
 
 // Exposed for tests.
+module.exports.isCronInFlight = () => cronInFlight;
+module.exports.cronLastFinishedAt = () => cronLastFinishedAt;
+module.exports.isFlipkartShortLink = isFlipkartShortLink;
 module.exports.alertKeyboard = alertKeyboard;

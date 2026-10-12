@@ -807,6 +807,25 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// Two overlapping cron runs cost twice the reads and writes and buy nothing.
+// The pipeline is entered from the schedule, from /api/cron, and (before this
+// build) from the message middleware — so the lock lives at the entry point.
+// ---------------------------------------------------------------------------
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  check('the cron entry point is wrapped in a run lock', /if \(cronInFlight\)/.test(cron));
+  check('...and refuses rather than stacking a second run', /skipped: 'already_running'/.test(cron));
+  check('...and always releases the lock', /finally \{\s*\n\s*cronInFlight = false;/.test(cron));
+  check('the inner pipeline still runs', /const runCron = async \(req, res\) => \{/.test(cron));
+  check('cron still exports a handler', /module\.exports = handler;/.test(cron));
+  check('...that reports its lock state', /module\.exports\.isCronInFlight/.test(cron));
+  check('...and the test helpers survive the wrapper',
+    /module\.exports\.alertKeyboard = alertKeyboard;/.test(cron) &&
+    /module\.exports\.isFlipkartShortLink = isFlipkartShortLink;/.test(cron));
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

@@ -751,6 +751,43 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// /list produced NO REPLY on a Firestore quota error. The catch logged and
+// returned, and the global bot.catch only logged too — so a failing command was
+// indistinguishable from a bot that is down.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('there is exactly one global error handler', (tg.match(/bot\.catch\(/g) || []).length === 1);
+  check('...and it REPLIES, not just logs',
+    /bot\.catch\(async \(err, ctx\)/.test(tg) && /ctx\.reply\(/.test(tg));
+  check('a quota error is recognised as such',
+    /function isQuotaError/.test(tg) && /RESOURCE_EXHAUSTED/.test(tg));
+  check('...and reported to the user in plain words',
+    /Database limit reached/.test(tg));
+  check('sendTrackingList no longer fails silently',
+    (() => {
+      const start = tg.indexOf('async function sendTrackingList');
+      const body = tg.slice(start, start + 12000);
+      return /sendTrackingList failed/.test(body) && /ctx\.reply\(/.test(body.slice(body.indexOf('sendTrackingList failed')));
+    })());
+  check('...and even a failed reply is logged, not swallowed',
+    /could not even report the failure/.test(tg));
+
+  // The classifier, exercised.
+  const m = tg.match(/function isQuotaError\(err\) \{[\s\S]*?\n}/);
+  check('the quota classifier exists', !!m);
+  if (m) {
+    eval(m[0].replace(/^function /, 'var isQuotaError = function '));
+    check('gRPC code 8 is a quota error', isQuotaError({ code: 8 }) === true);
+    check('RESOURCE_EXHAUSTED text is a quota error',
+      isQuotaError(new Error('8 RESOURCE_EXHAUSTED: Quota exceeded.')) === true);
+    check('an ordinary error is not', isQuotaError(new Error('boom')) === false);
+    check('null is not', isQuotaError(null) === false);
+  }
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

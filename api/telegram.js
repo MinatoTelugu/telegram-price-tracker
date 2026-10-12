@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-123 (2026-10-11)';
+const BUILD = 'names-124 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -473,7 +473,38 @@ async function sendTrackingList(ctx) {
     await ctx.reply(lines.join('\n'), opts);
   } catch (err) {
     console.error('sendTrackingList failed', err);
+    // NEVER LEAVE THE USER STARING AT NOTHING.
+    //
+    // This catch used to log and return. On a Firestore quota error that meant
+    // /list produced no reply at all — the command looked broken, and the only
+    // trace was a stack trace in the Koyeb log. A command that fails silently is
+    // indistinguishable from a bot that is down.
+    try {
+      await ctx.reply(
+        isQuotaError(err)
+          ? '⚠️ <b>Database limit reached</b>\n\n' +
+            'The database refused the request, so I could not read your list. This is a ' +
+            'quota problem on our side, not something you did. It resets on its own — ' +
+            'please try again a little later.'
+          : '⚠️ I could not read your list just now. Please try again in a moment.',
+        { parse_mode: 'HTML' }
+      );
+    } catch (replyErr) {
+      console.error('sendTrackingList: could not even report the failure', replyErr.message);
+    }
   }
+}
+
+/**
+ * Is this Firestore saying "you have used your quota"?
+ *
+ * It arrives as gRPC code 8 RESOURCE_EXHAUSTED, and the wording has changed
+ * between client versions, so both the code and the text are checked.
+ */
+function isQuotaError(err) {
+  if (!err) return false;
+  if (err.code === 8 || err.code === 'RESOURCE_EXHAUSTED') return true;
+  return /RESOURCE_EXHAUSTED|Quota exceeded|quota/i.test(String(err.message || ''));
 }
 
 /**
@@ -1341,6 +1372,8 @@ const CONVERT_ERRORS = {
 const DB_DOWN = '⚠️ My database is not configured yet, so I cannot track that link. Please try again later.';
 
 function registerHandlers(bot) {
+
+
   // Rate limit first, so a flood gets one clear message instead of many replies.
   bot.use(async (ctx, next) => {
     try {
@@ -2421,8 +2454,31 @@ function registerHandlers(bot) {
     }
   });
 
-  bot.catch((err, ctx) => {
-    console.error('Bot error on update', ctx && ctx.updateType, err);
+  // ── THE GLOBAL SAFETY NET ─────────────────────────────────────────────────
+  //
+  // This handler only LOGGED. Any command that threw without its own try/catch
+  // therefore left the user with NO REPLY at all — indistinguishable from the bot
+  // being offline. /list did exactly that on a Firestore quota error: the command
+  // looked dead and the only trace was a stack trace in the Koyeb log.
+  //
+  // Now the person is told something, and a quota error says so in plain words
+  // rather than as a database code.
+  bot.catch(async (err, ctx) => {
+    const e = (err && err.error) || err;
+    console.error('Bot error on update', ctx && ctx.updateType, e);
+    try {
+      if (ctx && ctx.reply) {
+        await ctx.reply(
+          isQuotaError(e)
+            ? '⚠️ <b>Database limit reached</b>\n\nThat request could not be completed because ' +
+              'the database refused it. It resets on its own — please try again a little later.'
+            : '⚠️ Something went wrong handling that. Please try again in a moment.',
+          { parse_mode: 'HTML' }
+        );
+      }
+    } catch (replyErr) {
+      console.error('bot.catch could not reply:', replyErr.message);
+    }
   });
 }
 

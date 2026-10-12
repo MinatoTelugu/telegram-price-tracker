@@ -275,7 +275,8 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   const SKIP = [
     ['Maybelline Matte Lipstick Red', 'makeup'],
     ['Prestige Mixer Grinder 750W', 'appliance'],
-    ['Samsung Galaxy M17 5G Mobile', 'mobile'],
+    // Mobiles are WANTED now — the channel asked for phone deals, so this
+    // moved from the SKIP list to the POST list above.
     ['Boat Airdopes 141 Bluetooth Earbuds', 'earbuds'],
     ['Godrej 190L Refrigerator', 'appliance'],
     ['Milton Water Bottle 1L', 'bottle'],
@@ -292,8 +293,13 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
     check('fashion: SKIP ' + t.slice(0, 34) + ' (' + why + ')', v.ok === false, JSON.stringify(v));
   }
   check('an empty title is never posted', deals.fashionCheck('').ok === false);
-  check('a phone is blocked even though "mobile" appears in no allowlist word',
-    deals.fashionCheck('Apple iPhone 17 (Black, 256 GB)').ok === false);
+  // Phones are a category the channel WANTS, including models that never say the
+  // word "mobile" — "iQOO Z11 Lite 5G (Solar Flame, 6GB)" — which is why the phone
+  // brands are recognised as well.
+  check('a phone with no category word is still POSTED',
+    deals.fashionCheck('iQOO Z11 Lite 5G (Solar Flame, 6GB)').ok === true);
+  check('...and so is a phone named by brand',
+    deals.fashionCheck('Nothing Phone 3a').ok === true);
 }
 
 

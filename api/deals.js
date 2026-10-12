@@ -69,6 +69,11 @@ const MIN_DISCOUNT = parseFloat(
 );
 const MAX_PER_RUN = parseInt(process.env.DEALS_MAX_PER_RUN || '5', 10);
 const REPOST_DAYS = parseInt(process.env.DEALS_REPOST_DAYS || '30', 10);
+// A finer knob than whole days, because the channel asked for "skip anything
+// posted in the last 24 hours" and days cannot express that. Hours wins when set.
+const REPOST_HOURS = process.env.DEALS_REPOST_HOURS
+  ? parseInt(process.env.DEALS_REPOST_HOURS, 10)
+  : null;
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
 function escapeHtml(value = '') {
@@ -144,16 +149,26 @@ function classifyGender(title) {
 
 /** Was this key posted within the last `hours`? */
 async function recentlyPosted(key, hours) {
-  if (!db || !key) return false;
+  if (!key) return false;
+  if (!db) return false;
+  // Hours wins over the caller's default when DEALS_REPOST_HOURS is set, so the
+  // channel can say "nothing within 24 hours" without whole days getting in the way.
+  const window = REPOST_HOURS != null && !isNaN(REPOST_HOURS) ? REPOST_HOURS : hours;
   try {
     const snap = await db.collection(COLLECTIONS.DEALS_POSTED).doc(key).get();
     if (!snap.exists) return false;
     const d = snap.data() || {};
     const at = d.postedAt && d.postedAt.toMillis ? d.postedAt.toMillis() : null;
     if (!at) return true;
-    return Date.now() - at < hours * 3600 * 1000;
+    return Date.now() - at < window * 3600 * 1000;
   } catch (err) {
-    return false;
+    // FAIL CLOSED, same as alreadyPosted: an unreadable record is not permission
+    // to repost. This is the other half of the duplicate-posts bug.
+    console.warn(
+      'deals: could not read the post record for ' + key + ' (' + err.message +
+        ') — SKIPPING rather than risking a duplicate'
+    );
+    return true;
   }
 }
 
@@ -246,17 +261,40 @@ async function imageFromProductPage(url) {
   return null;
 }
 
+// What this process has already put in the channel, so a Firestore failure
+// cannot make us forget within the same run.
+const POSTED_THIS_PROCESS = new Set();
+
+/**
+ * Has this deal already gone out?
+ *
+ * THIS USED TO FAIL OPEN, and that is why the channel repeated itself. The catch
+ * returned false — "not posted" — so the moment Firestore started refusing reads
+ * (8 RESOURCE_EXHAUSTED, the quota error in your log) EVERY deal looked unposted
+ * and the whole batch was posted again on the next run. A duplicate is what you
+ * get when an error is read as permission.
+ *
+ * It now fails CLOSED. If we cannot tell whether a deal has been posted, we do
+ * not post it. Missing a deal for an hour is a nuisance; posting the same twenty
+ * products every six hours is a broken channel.
+ */
 async function alreadyPosted(id) {
+  if (POSTED_THIS_PROCESS.has(String(id))) return true;
   if (!db) return false;
   try {
     const snap = await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).get();
     return snap.exists;
   } catch (err) {
-    return false;
+    console.warn(
+      'deals: could not check whether ' + id + ' was posted (' + err.message +
+        ') — SKIPPING it rather than risking a duplicate'
+    );
+    return true;
   }
 }
 
 async function markPosted(id, deal, isFingerprint) {
+  POSTED_THIS_PROCESS.add(String(id));
   if (!db) return;
   try {
     await db.collection(COLLECTIONS.DEALS_POSTED).doc(id).set(
@@ -530,6 +568,10 @@ module.exports = async (req, res) => {
       // Same PRODUCT under a different listing id / slightly different title:
       // never repost it within 48 hours.
       const fp = titleFingerprint(deal.title);
+      if (fp && POSTED_THIS_PROCESS.has('fp:' + fp)) {
+        skipped.push({ id: deal.id, reason: 'duplicate_title', fingerprint: fp });
+        continue;
+      }
       if (fp && (await recentlyPosted(fp, 48))) {
         skipped.push({ id: deal.id, reason: 'duplicate_title', fingerprint: fp });
         console.log('deals: skipped a duplicate title — ' + String(deal.title).slice(0, 60));
@@ -558,7 +600,10 @@ module.exports = async (req, res) => {
         // Record the title fingerprint as well, so a re-listed duplicate is
         // caught even though its id differs.
         const fpKey = titleFingerprint(deal.title);
-        if (fpKey) await markPosted(fpKey, deal, true);
+        if (fpKey) {
+          POSTED_THIS_PROCESS.add('fp:' + fpKey);
+          await markPosted(fpKey, deal, true);
+        }
         posted.push({ id: deal.id, title: deal.title, discount: deal.discount, link: shortLink });
         console.log('deals: posted ok — total so far ' + posted.length);
       } catch (err) {

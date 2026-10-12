@@ -156,6 +156,16 @@ function enforceMinInterval(expr, minHours) {
 
 const priceCron = enforceMinInterval(process.env.PRICE_CRON || DEFAULT_PRICE_CRON, PRICE_CRON_MIN_HOURS);
 
+/** Roughly how many ms apart the price schedule runs, for the starvation check. */
+const PRICE_INTERVAL_MS = (() => {
+  const parts = String(priceCron).trim().split(/\s+/);
+  const hour = parts[1] || '*';
+  const m = /^\*\/(\d+)$/.exec(hour);
+  if (m) return parseInt(m[1], 10) * 3600 * 1000;
+  if (hour === '*') return 3600 * 1000;
+  return 24 * 3600 * 1000;
+})();
+
 // ---- helpers --------------------------------------------------------------
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
@@ -222,6 +232,10 @@ function callHandler(handler, headers) {
   });
 }
 
+/** When the price job last completed, so we can detect a starved schedule. */
+let lastPriceJobAt = 0;
+let lastPriceJobLoggedAt = 0;
+
 async function runJob(name) {
   // Belt AND braces. Stopping the timers is not enough on its own: a tick that
   // was already in flight when the poll conflict was detected, or the startup
@@ -229,12 +243,38 @@ async function runJob(name) {
   // a poll conflict must not touch the database AT ALL — it is the duplicate
   // instance that doubles every read and write in the first place.
   if (jobsPaused) {
-    console.log(name + ' -> skipped (this instance does not own the poll)');
-    return;
+    // STARVATION ESCAPE.
+    //
+    // Standing down is right when another instance owns the poll — but Telegram
+    // can hand the 409 to BOTH sides in turn, and then both stand down and NOBODY
+    // runs the schedule. That is not hypothetical: /diag showed operations this
+    // process: 2 (only list:read), no cron:scan at all, and a last price check
+    // from the previous evening. The quota was fine and the job was simply never
+    // run.
+    //
+    // So a paused instance still runs the job when the schedule has clearly been
+    // starved — three missed intervals. Running it late is far better than not
+    // running it, and the alternative (a permanently silent tracker) is worse
+    // than the double-write this stand-down exists to prevent.
+    const starved =
+      name === 'cron' && lastPriceJobAt > 0 && Date.now() - lastPriceJobAt > 3 * PRICE_INTERVAL_MS;
+    if (!starved) {
+      console.log(name + ' -> skipped (this instance does not own the poll)');
+      return;
+    }
+    if (Date.now() - lastPriceJobLoggedAt > 30 * 60 * 1000) {
+      lastPriceJobLoggedAt = Date.now();
+      console.warn(
+        name + ': schedule has not run for over 3 intervals while this instance is stood down — ' +
+          'running it anyway. This usually means BOTH instances are paused; check for a second ' +
+          'deployment.'
+      );
+    }
   }
   const handler = loadJob(name);
   if (!handler) return;
   const r = await callHandler(handler, { host: 'localhost' });
+  if (name === 'cron') lastPriceJobAt = Date.now();
   console.log(name + ' ->', r.statusCode, String(r.body).slice(0, 300));
 }
 

@@ -159,5 +159,23 @@ check('the rupee fallback skips exchange/EMI figures', scr.includes('firstRealPr
   check('...and says so rather than failing quietly', /skipped \(this instance does not own the poll\)/.test(src));
 }
 
+// ---------------------------------------------------------------------------
+// STARVATION. From the real /diag: "operations this process: 2" (only
+// list:read), no cron:scan at all, last price check the previous evening. The
+// quota was fine — the job was never run, because Telegram can hand the 409 to
+// both instances in turn and then BOTH stand down. A paused instance must still
+// run a schedule that has clearly been starved.
+// ---------------------------------------------------------------------------
+{
+  const src = fs.readFileSync(__dirname + '/server.js', 'utf8');
+  check('the starved-schedule escape exists', /STARVATION ESCAPE/.test(src));
+  check('...and a paused instance can still run a starved job', /const starved =/.test(src));
+  check('...after three missed intervals', /3 \* PRICE_INTERVAL_MS/.test(src));
+  check('...and says so loudly', /BOTH instances are paused/.test(src));
+  check('the interval is derived from the schedule', /const PRICE_INTERVAL_MS =/.test(src));
+  check('...and the price job records when it last ran', /if \(name === 'cron'\) lastPriceJobAt = Date.now\(\)/.test(src));
+  check('an ordinary paused skip still happens', /does not own the poll/.test(src));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

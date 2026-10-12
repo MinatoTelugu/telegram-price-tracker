@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-130 (2026-10-11)';
+const BUILD = 'names-131 (2026-10-11)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1388,38 +1388,29 @@ function registerHandlers(bot) {
     // Fire-and-forget: it must never slow the reply down.
     if (ctx.from && db) {
       upsertUser(ctx.from).catch((err) => console.warn('user upsert failed:', err.message));
-      // And, if a price check is due, run one in the background.
-      maybeRunPriceChecks('update').catch(() => {});
     }
     return next();
   });
 
   /**
-   * Opportunistic price check. On a host that sleeps, a timer only fires while
-   * the instance is awake — so we ALSO run a check whenever the bot is actually
-   * being used, throttled to PRICE_CHECK_MINUTES (default 30). Fire-and-forget:
-   * it must never slow a reply.
+   * REMOVED: the opportunistic price check.
+   *
+   * This ran the ENTIRE cron job from inside the message middleware whenever a
+   * user said anything, throttled to PRICE_CHECK_MINUTES — 30 by default. So the
+   * schedule was "hourly, plus an extra full sweep every half hour that anyone
+   * happened to talk to the bot". Every product read, every history write and
+   * every cleanup pass, twice as often as intended, and more often still when two
+   * instances were alive.
+   *
+   * It existed for hosts that SLEEP between requests, where a timer may not fire.
+   * This bot runs as a long-lived process on Koyeb with node-cron, so the timer
+   * always fires and the opportunistic sweep was pure duplication. Nothing in the
+   * product depends on it: the schedule is the schedule.
    */
-  let lastPriceRunAt = 0;
-  let priceRunInFlight = false;
-  async function maybeRunPriceChecks(reason) {
-    const everyMs = Math.max(5, parseInt(process.env.PRICE_CHECK_MINUTES || '30', 10)) * 60 * 1000;
-    if (priceRunInFlight || Date.now() - lastPriceRunAt < everyMs) return;
-    priceRunInFlight = true;
-    lastPriceRunAt = Date.now();
-    try {
-      const cronFn = require('./cron');
-      await cronFn(
-        { method: 'GET', headers: internalCronHeaders(), query: {} },
-        { statusCode: 0, setHeader() {}, end() {} }
-      );
-      console.log('price check: opportunistic run complete (' + reason + ')');
-    } catch (err) {
-      console.warn('price check: opportunistic run failed — ' + err.message);
-    } finally {
-      priceRunInFlight = false;
-    }
+  async function maybeRunPriceChecks() {
+    return;
   }
+
 
   // GLOBAL: never render a link preview on any outgoing message. Done here once
   // rather than repeating link_preview_options at every reply call site.

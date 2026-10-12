@@ -791,6 +791,22 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// The message middleware ran the WHOLE cron job whenever anyone talked to the
+// bot, throttled to 30 minutes — doubling the hourly schedule, and doubling it
+// again with two instances. That is a large share of the Firestore quota.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('a message no longer triggers a whole price-check run',
+    !/maybeRunPriceChecks\('update'\)/.test(tg));
+  check('...and the helper is inert', /async function maybeRunPriceChecks\(\) \{\s*\n\s*return;/.test(tg));
+  check('...with the reason recorded', /REMOVED: the opportunistic price check/.test(tg));
+  check('the schedule is the only thing that runs the cron now',
+    /cron\.schedule\(priceCron/.test(fs.readFileSync(__dirname + '/server.js', 'utf8')));
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

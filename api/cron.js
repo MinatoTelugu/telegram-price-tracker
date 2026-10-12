@@ -56,6 +56,10 @@ const INCREASE_THRESHOLD = parseFloat(process.env.PRICE_INCREASE_THRESHOLD_PERCE
 // double cron run, short enough that a genuine repeat a few hours later still
 // reaches the user.
 const ALERT_COOLDOWN_MINUTES = parseInt(process.env.ALERT_COOLDOWN_MINUTES || '180', 10);
+// How often the expensive per-product passes may run. These read whole history
+// collections, so they are the difference between a comfortable quota and none.
+const SELF_CLEAN_MIN_HOURS = parseInt(process.env.SELF_CLEAN_MIN_HOURS || '12', 10);
+const PRUNE_MIN_HOURS = parseInt(process.env.PRUNE_MIN_HOURS || '24', 10);
 const CONFIRM_THRESHOLD = parseFloat(process.env.PRICE_CONFIRM_THRESHOLD_PERCENT || '3');
 const HISTORY_DAYS = 30;
 // The history sanity pass runs by itself, once a day, so a polluted history is
@@ -548,7 +552,21 @@ async function processProduct(doc) {
   // time. A GUESS never triggers it — only a price we can stand behind does.
   // Never awaited in a way that can fail the check: selfCleanProduct swallows its
   // own errors and returns null.
-  if (!result.guess) {
+  //
+  // AND ONLY OCCASIONALLY. This pass reads the product's ENTIRE history — up to
+  // 2000 documents — and it used to run on EVERY check for EVERY product. At
+  // hourly checks across a dozen products that is tens of thousands of reads a
+  // day on its own, which is how a free-tier quota gets exhausted:
+  //   8 RESOURCE_EXHAUSTED: Quota exceeded
+  // Nothing it does needs to happen hourly. A polluted history is not an
+  // emergency, so it now runs at most once per SELF_CLEAN_MIN_HOURS per product.
+  const lastClean = data.lastSelfCleanAt && data.lastSelfCleanAt.toMillis
+    ? data.lastSelfCleanAt.toMillis()
+    : null;
+  const cleanDue =
+    lastClean == null || Date.now() - lastClean > SELF_CLEAN_MIN_HOURS * 3600 * 1000;
+
+  if (!result.guess && cleanDue) {
     try {
       const { selfCleanProduct } = require('../lib/selfClean');
       const cleanReport = await selfCleanProduct({
@@ -557,6 +575,10 @@ async function processProduct(doc) {
         mrp: result.mrp != null ? result.mrp : data.mrp,
         log: (line) => console.log(line),
       });
+      // Stamp it whether or not anything was removed, so the throttle holds.
+      await doc.ref
+        .set({ lastSelfCleanAt: FieldValue.serverTimestamp() }, { merge: true })
+        .catch(() => {});
       if (cleanReport && cleanReport.removed) {
         console.log(
           'cron: ' + doc.id + ' self-corrected — removed ' + cleanReport.removed +
@@ -568,7 +590,15 @@ async function processProduct(doc) {
     }
   }
 
-  await pruneOldHistory(doc.ref);
+  // The history prune is a query plus deletes. Daily is plenty — running it on
+  // every check was pure quota burn for no benefit.
+  const lastPrune = data.lastPruneAt && data.lastPruneAt.toMillis ? data.lastPruneAt.toMillis() : null;
+  if (lastPrune == null || Date.now() - lastPrune > PRUNE_MIN_HOURS * 3600 * 1000) {
+    await pruneOldHistory(doc.ref);
+    await doc.ref
+      .set({ lastPruneAt: FieldValue.serverTimestamp() }, { merge: true })
+      .catch(() => {});
+  }
 
   // Alerts: price drops, price increases, and back-in-stock.
   let alerted = 0;

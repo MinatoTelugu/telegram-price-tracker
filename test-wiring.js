@@ -623,9 +623,10 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the cron runs the self-correction pass',
     /selfCleanProduct\(/.test(cron));
   check('...only after a TRUSTED reading, never after a guess',
-    /if \(!result\.guess\) \{[\s\S]{0,400}selfCleanProduct/.test(cron));
-  check('...passing the price we just validated as the reference',
-    /trustedPrice: newPrice/.test(cron));
+    /!result\.guess && cleanDue/.test(cron) && /selfCleanProduct\(/.test(cron));
+  check('...and only when it is DUE, because it reads the whole history',
+    /SELF_CLEAN_MIN_HOURS/.test(cron) && /const cleanDue/.test(cron));
+  check('...and the daily prune is throttled too', /PRUNE_MIN_HOURS/.test(cron));
   check('...and the MRP, so an impossible price is caught too',
     /mrp: result\.mrp != null \? result\.mrp : data\.mrp/.test(cron));
   check('...and a failure there cannot break the price check',

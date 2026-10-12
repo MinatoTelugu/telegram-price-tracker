@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-133 (2026-10-12)';
+const BUILD = 'names-134 (2026-10-12)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -2414,6 +2414,15 @@ function registerHandlers(bot) {
         hint = '⚠️ I do not have permission to write to the database (check the service account).';
       } else if (/UNAUTHENTICATED|credential|invalid_grant/i.test(msg)) {
         hint = '⚠️ My database credentials were rejected. Please try again later.';
+      } else if (isQuotaError(err)) {
+        // The quota refuses WRITES as well as reads, so a spent quota also stops
+        // a link being saved — which used to surface as "something went wrong
+        // while processing that link" and sent people looking at Amazon. Name it.
+        hint =
+          '⚠️ <b>Database limit reached</b>\n\n' +
+          'I could not save that product because the database is at its daily limit. ' +
+          'This is a quota problem on our side, not a bad link. It resets on its own — ' +
+          'please try again a little later.';
       }
       try {
         await finishPlaceholder(ctx, placeholder, hint, {});

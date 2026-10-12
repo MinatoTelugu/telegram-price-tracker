@@ -63,15 +63,48 @@ const DEFAULT_PRICE_CRON = '0 */6 * * *';
  * source for that pattern, so it passed while the check was dead. The test now
  * calls this function with real expressions.
  */
-function tooFrequent(expr) {
-  const minute = String(expr || '').trim().split(/\s+/)[0] || '';
-  if (minute === '*') return true;                 // every minute
-  const step = /^\*\/(\d+)$/.exec(minute);         // */N
-  if (step) return parseInt(step[1], 10) < 60;     // more than once an hour
-  if (/^\d+(?:,\d+)+$/.test(minute)) {             // "0,30"
-    return minute.split(',').length > 2;
-  }
-  return false;
+/**
+ * How many HOURS apart two runs of this cron expression are, at its most
+ * frequent. Returns 0 when the expression cannot be understood.
+ *
+ * The previous version looked only at the MINUTE field. So "0 * * * *" - hourly,
+ * the single most damaging schedule on the free tier - had minute "0", was judged
+ * fine, and ran 24 times a day. The hour field is where "hourly" actually lives,
+ * and it was never read. This reads both.
+ */
+function minIntervalHours(expr) {
+  const parts = String(expr || '').trim().split(/\s+/);
+  if (parts.length < 2) return 0;
+  const minute = parts[0];
+  const hour = parts[1];
+
+  // Minutes between runs: "*" is every minute, "*/N" is every N, a list is its
+  // length spread over the hour, a fixed value means once an hour.
+  let perHour = 1;
+  if (minute === '*') perHour = 60;
+  else if (/^\*\/(\d+)$/.test(minute)) perHour = Math.max(1, Math.floor(60 / parseInt(minute.match(/^\*\/(\d+)$/)[1], 10)));
+  else if (/^\d+(?:,\d+)+$/.test(minute)) perHour = minute.split(',').length;
+
+  // Hours between runs: "*" is every hour, "*/N" is every N hours, a list is its
+  // length spread over the day, a fixed value means once a day.
+  let hourGap = 1;
+  if (hour === '*') hourGap = 1;
+  else if (/^\*\/(\d+)$/.test(hour)) hourGap = parseInt(hour.match(/^\*\/(\d+)$/)[1], 10);
+  else if (/^\d+(?:,\d+)+$/.test(hour)) hourGap = Math.max(1, Math.floor(24 / hour.split(',').length));
+  else hourGap = 24;
+
+  // One run per hour at most means the hour field decides the gap outright.
+  if (perHour <= 1) return hourGap;
+  // Several runs an hour: the effective gap is a fraction of an hour.
+  return hourGap / perHour;
+}
+
+/** True when this expression runs more often than once every `minHours` hours. */
+function tooFrequent(expr, minHours) {
+  const gap = minIntervalHours(expr);
+  if (!gap) return false;                       // unparseable — leave it alone
+  const limit = Number.isFinite(minHours) && minHours > 0 ? minHours : 1;
+  return gap < limit;
 }
 
 // Tell the operator clearly what is missing, instead of dying silently.
@@ -93,15 +126,35 @@ if (!process.env.WEB_APP_URL) {
 // Amazon source we have, so a */30 schedule over a few dozen products exhausts it
 // in days — and when it is gone, Amazon falls back to the reader's text scan,
 // which is the guess that produced the wrong prices in the first place.
-const priceCron = process.env.PRICE_CRON || DEFAULT_PRICE_CRON;
-if (tooFrequent(priceCron)) {
+/**
+ * How often the price check may run, at most, regardless of what PRICE_CRON says.
+ *
+ * A warning was not enough. PRICE_CRON was set to hourly on the deployment, the
+ * warning scrolled past in the log, and the schedule emptied the Firestore daily
+ * quota before lunchtime - which locks /list AND stops new links being saved, so
+ * the whole bot looked broken while every individual piece of it was working.
+ *
+ * So the interval is now ENFORCED, not advised: anything more frequent than
+ * PRICE_CRON_MIN_HOURS (default 4) is clamped to it, loudly, at startup. A price
+ * tracker does not need better than four-hourly resolution, and the free tier
+ * cannot afford it. Set PRICE_CRON_MIN_HOURS=1 to allow hourly deliberately.
+ */
+const PRICE_CRON_MIN_HOURS = Math.max(1, parseInt(process.env.PRICE_CRON_MIN_HOURS || '4', 10));
+
+/** Rewrite an over-frequent schedule to the minimum interval. Returns the cron. */
+function enforceMinInterval(expr, minHours) {
+  if (!tooFrequent(expr, minHours)) return expr;
+  const clamped = '0 */' + minHours + ' * * *';
   console.warn(
-    'NOTE: PRICE_CRON is "' + priceCron + '". The Amazon API free tier is 1,000 ' +
-      'calls/month; a schedule this frequent will exhaust it within days, after ' +
-      'which Amazon prices fall back to a text guess. Every 2-6 hours is plenty ' +
-      'for a price tracker.'
+    'PRICE_CRON is "' + expr + '", which is more often than the ' + minHours + '-hourly minimum. ' +
+      'Running it that often reads and writes the whole product list many times a day and ' +
+      'empties the Firestore free-tier quota - which then locks /list and stops new links being ' +
+      'saved. CLAMPED to "' + clamped + '". Set PRICE_CRON_MIN_HOURS=1 to allow it.'
   );
+  return clamped;
 }
+
+const priceCron = enforceMinInterval(process.env.PRICE_CRON || DEFAULT_PRICE_CRON, PRICE_CRON_MIN_HOURS);
 
 // ---- helpers --------------------------------------------------------------
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -395,7 +448,7 @@ async function startPolling() {
   // spotted). startPolling retries internally, so it needs no await.
   startPolling().catch((err) => console.error('polling failed:', err.message));
 
-  const priceCron = process.env.PRICE_CRON || DEFAULT_PRICE_CRON;
+  const priceCron = enforceMinInterval(process.env.PRICE_CRON || DEFAULT_PRICE_CRON, PRICE_CRON_MIN_HOURS);
   const dealsCron = process.env.DEALS_CRON || '30 */6 * * *';
 
   // ── ONLY THE INSTANCE THAT OWNS THE POLL RUNS THE JOBS ───────────────────

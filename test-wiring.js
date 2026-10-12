@@ -310,16 +310,23 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   // source for the pattern, so it passed while the matcher was dead: the regex
   // had a doubled backslash and never matched anything.
   {
-    const m = server.match(/function tooFrequent[\s\S]*?\n}/);
-    check('the frequency matcher exists', !!m);
-    if (m) {
-      eval(m[0].replace(/^function /, 'var tooFrequent = function '));
-      check('a 30-minute schedule is flagged', tooFrequent('*/30 * * * *') === true);
-      check('an every-minute schedule is flagged', tooFrequent('* * * * *') === true);
-      check('a 5-minute schedule is flagged', tooFrequent('*/5 * * * *') === true);
-      check('a 6-hourly schedule is NOT flagged', tooFrequent('0 */6 * * *') === false);
-      check('a 2-hourly schedule is NOT flagged', tooFrequent('0 */2 * * *') === false);
-      check('a daily schedule is NOT flagged', tooFrequent('0 0 * * *') === false);
+    const m = server.match(/function minIntervalHours[\s\S]*?\n}/);
+    const m2 = server.match(/function tooFrequent[\s\S]*?\n}/);
+    check('the frequency matcher exists', !!m && !!m2);
+    if (m && m2) {
+      eval(m[0].replace(/^function /, 'var minIntervalHours = function '));
+      eval(m2[0].replace(/^function /, 'var tooFrequent = function '));
+      check('a 30-minute schedule is flagged', tooFrequent('*/30 * * * *', 4) === true);
+      check('an every-minute schedule is flagged', tooFrequent('* * * * *', 4) === true);
+      check('a 5-minute schedule is flagged', tooFrequent('*/5 * * * *', 4) === true);
+      // HOURLY. This is the case the old matcher missed, because it only read the
+      // minute field and "0" looks harmless there.
+      check('an HOURLY schedule is flagged', tooFrequent('0 * * * *', 4) === true);
+      check('...and its interval is read as one hour', minIntervalHours('0 * * * *') === 1);
+      check('a 2-hourly schedule is flagged at a 4h floor', tooFrequent('0 */2 * * *', 4) === true);
+      check('a 6-hourly schedule is NOT flagged', tooFrequent('0 */6 * * *', 4) === false);
+      check('a daily schedule is NOT flagged', tooFrequent('0 0 * * *', 4) === false);
+      check('hourly is allowed when the floor is 1h', tooFrequent('0 * * * *', 1) === false);
     }
     // And the DEFAULT is not the very thing the warning exists to catch.
     const def = /const DEFAULT_PRICE_CRON = '([^']+)'/.exec(server);
@@ -845,6 +852,19 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...served without a database read while fresh', /LIST_CACHE_MINUTES \* 60 \* 1000/.test(tg));
   check('...and served stale when the database refuses', /Last saved copy/.test(tg));
   check('...rather than only apologising', /const stale = ctx\.from && LIST_CACHE\.get/.test(tg));
+}
+
+
+// ---------------------------------------------------------------------------
+// A spent quota refuses WRITES as well as reads, so saving a new link failed
+// with "something went wrong while processing that link" and sent people
+// looking at Amazon. It is named now.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('a quota error when saving a link is named, not blamed on the link',
+    /isQuotaError\(err\)\) \{\s*\n\s*\/\/ The quota refuses WRITES/.test(tg));
+  check('...and it says the limit was reached', /could not save that product because the database is at its daily limit/.test(tg));
 }
 
 

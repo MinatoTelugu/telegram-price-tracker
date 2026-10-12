@@ -112,5 +112,40 @@ const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
 check('the stock check treats "Notify Me" as out of stock', scr.includes("'notify me'"));
 check('the rupee fallback skips exchange/EMI figures', scr.includes('firstRealPrice'));
 
+// ---------------------------------------------------------------------------
+// PRICE_CRON was hourly on the deployment. tooFrequent() only read the MINUTE
+// field, so "0 * * * *" had minute "0", looked fine, and ran 24x/day until the
+// Firestore quota was gone. The hour field is where "hourly" lives. It is read
+// now, and an over-frequent schedule is clamped rather than merely warned about.
+// ---------------------------------------------------------------------------
+{
+  const src = fs.readFileSync(__dirname + '/server.js', 'utf8');
+  const grab = (n) => {
+    const i = src.indexOf('function ' + n + '(');
+    if (i < 0) return null;
+    let d = 0, j = src.indexOf('{', i);
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (!d) return src.slice(i, k + 1); }
+    }
+    return null;
+  };
+  const parts = ['minIntervalHours', 'tooFrequent', 'enforceMinInterval'].map(grab);
+  check('the cron interval parser exists', parts.every(Boolean));
+  eval(parts.map((p) => p.replace(/^function (\w+)/, 'var $1 = function')).join('\n'));
+
+  check('hourly is recognised as too frequent', tooFrequent('0 * * * *', 4));
+  check('every-2-hours is too frequent at a 4h floor', tooFrequent('0 */2 * * *', 4));
+  check('every-6-hours is not', !tooFrequent('0 */6 * * *', 4));
+  check('once a day is not', !tooFrequent('0 3 * * *', 4));
+  check('hourly clamps to 4-hourly', enforceMinInterval('0 * * * *', 4) === '0 */4 * * *');
+  check('2-hourly clamps to 4-hourly', enforceMinInterval('0 */2 * * *', 4) === '0 */4 * * *');
+  check('6-hourly is left alone', enforceMinInterval('0 */6 * * *', 4) === '0 */6 * * *');
+  check('a twice-daily schedule is left alone', enforceMinInterval('0 9,21 * * *', 4) === '0 9,21 * * *');
+  check('the clamp is applied at startup', /enforceMinInterval\(process\.env\.PRICE_CRON/.test(src));
+  check('...and at both places the cron is read', (src.match(/enforceMinInterval\(process\.env\.PRICE_CRON/g) || []).length === 2);
+}
+
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

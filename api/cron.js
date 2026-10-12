@@ -896,6 +896,7 @@ const runCron = async (req, res) => {
       console.warn('cron: ordered scan refused (' + err.message + ') — falling back to an unordered page');
       snap = await db.collection(COLLECTIONS.PRODUCTS).limit(SCAN_LIMIT).get();
     }
+    quotaGuard.count('cron:scan');
     const totalProducts = snap.docs.length;
     const activeDocs = snap.docs.filter((d) => {
       const v = d.data();
@@ -928,6 +929,7 @@ const runCron = async (req, res) => {
     let alertsTotal = 0;
     for (const doc of batch) {
       try {
+        quotaGuard.count('cron:product'); // 1 doc read + 1 history write each
         const r = await processProduct(doc);
         results.push(r);
         if (r && r.alerts) alertsTotal += r.alerts;

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-136 (2026-10-12)';
+const BUILD = 'names-137 (2026-10-12)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -369,6 +369,7 @@ async function sendTrackingList(ctx) {
 
     // Only ACTIVELY tracked products. Stopped products are not listed at all,
     // and they are not counted in the total.
+    quotaGuard.count('list:read');
     const activeSnap = await db
       .collection(COLLECTIONS.PRODUCTS)
       .where('subscribers', 'array-contains', uid)
@@ -1563,6 +1564,35 @@ function registerHandlers(bot) {
     const lines = ['🩺 <b>Diagnostics</b>', ''];
     try {
       lines.push('build: <code>' + escapeHtml(BUILD) + '</code>');
+
+      // THE QUOTA REPORT. The spec sheets keep asking for Firebase usage
+      // metrics; I cannot read the Firebase console, but the process can count
+      // its own calls, and that is the number that says which job is spending
+      // the quota. A big total minutes after a redeploy means more than one
+      // instance is running — the counts are per process.
+      {
+        const q = quotaGuard.status();
+        const t = quotaGuard.tally();
+        lines.push('');
+        lines.push('<b>Database quota</b>');
+        lines.push(
+          'breaker: ' +
+            (q.enabled
+              ? q.blocked
+                ? 'OPEN — ' + q.secondsRemaining + 's left (' + q.trips + ' trip(s))'
+                : 'closed (' + q.trips + ' trip(s) this process)'
+              : 'disabled')
+        );
+        if (q.lastReason) lines.push('last: <code>' + escapeHtml(String(q.lastReason).slice(0, 120)) + '</code>');
+        lines.push('operations this process: ' + t.total);
+        for (const op of Object.keys(t.byOp)) {
+          lines.push('  • ' + escapeHtml(op) + ': ' + t.byOp[op]);
+        }
+        lines.push(
+          '<i>Per-process counts. A large total right after a restart, or reads far ' +
+            'beyond what the schedule explains, means more than one instance is running.</i>'
+        );
+      }
       lines.push('BOT_TOKEN: ' + (process.env.BOT_TOKEN ? 'set' : 'MISSING'));
       lines.push('FIREBASE_SERVICE_ACCOUNT_KEY: ' + (process.env.FIREBASE_SERVICE_ACCOUNT_KEY ? 'set' : 'not set'));
       lines.push(

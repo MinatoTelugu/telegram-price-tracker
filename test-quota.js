@@ -61,5 +61,21 @@ check('the cron refuses to run while the breaker is open', /quota_guard_open/.te
 check('...and stops early once it trips mid-run', /stopping this run early instead of failing through the rest/.test(cron));
 check('a failed /list reports to the breaker', /quotaGuard\.noteError\(err\);\s*\n\s*console\.error\('sendTrackingList failed'/.test(tg));
 
+// The tally: what the process itself has asked the database for.
+g.resetTally();
+check('the tally starts empty', g.tally().total === 0);
+g.count('cron:scan');
+g.count('cron:product', 3);
+check('...and counts by operation', g.tally().total === 4);
+check('...keeping the breakdown', g.tally().byOp['cron:product'] === 3);
+g.resetTally();
+check('...and can be reset', g.tally().total === 0);
+
+check('/diag reports the quota breaker', /breaker: /.test(tg) && /quotaGuard\.status\(\)/.test(tg));
+check('...and the per-process operation tally', /operations this process: /.test(tg) && /quotaGuard\.tally\(\)/.test(tg));
+check('the cron counts its scan', /quotaGuard\.count\('cron:scan'\)/.test(cron));
+check('...and each product it checks', /quotaGuard\.count\('cron:product'\)/.test(cron));
+check('/list counts its own read', /quotaGuard\.count\('list:read'\)/.test(tg));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

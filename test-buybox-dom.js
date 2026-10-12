@@ -178,5 +178,61 @@ check('Flipkart still reads its own price', /22,999/.test(String(firstBuyboxText
 
 
 console.log('');
+// ---------------------------------------------------------------------------
+// THE VARIANT TABLE. Reported from a real Galaxy M17 page:
+//
+//   4GB + 128GB   ₹19,999.00   ₹27,999.00   In stock
+//   6GB + 128GB   Currently unavailable.
+//
+// The bot read "₹4" as the current AND lowest price, and raised a false OUT OF
+// STOCK. Those rows are the prices and stock of the OTHER variants — a real
+// price, real "Currently unavailable", not struck through, not in a carousel,
+// not above the MRP. Only their POSITION distinguishes them.
+// ---------------------------------------------------------------------------
+{
+  const { firstBuyboxText, isInVariantBlock, detectOutOfStock, priceLooksImplausible, ABSOLUTE_MIN_PRICE } = scraper;
+
+  check('a variant selector exists', typeof scraper.VARIANT_SELECTOR === 'string' && scraper.VARIANT_SELECTOR.length > 0);
+  check('the absolute floor is exported', Number.isFinite(ABSOLUTE_MIN_PRICE) && ABSOLUTE_MIN_PRICE > 1);
+
+  // The reported readings. All three must be rejected.
+  check('₹4 is implausible with no MRP at all', priceLooksImplausible(4, null));
+  check('₹4 is implausible against the real MRP', priceLooksImplausible(4, 27999));
+  check('...and so is any sub-₹20 reading', priceLooksImplausible(19, 999));
+  check('the real variant price is NOT rejected', !priceLooksImplausible(19999, 27999));
+  check('a legitimate cheap item is NOT rejected', !priceLooksImplausible(199, 399));
+
+  // The twister must be recognised as a variant block, and its prices skipped.
+  const $ = cheerio.load(`
+    <div id="corePriceDisplay_desktop_feature_div">
+      <span class="a-price" id="apexPriceToPay"><span class="a-offscreen">₹22,999.00</span></span>
+    </div>
+    <div id="twister">
+      <div id="variation_size_name">
+        <span class="a-price"><span class="a-offscreen">₹19,999.00</span></span>
+        <span>Currently unavailable.</span>
+      </div>
+    </div>`);
+  check('a twister element is recognised as a variant block', isInVariantBlock($, $('#variation_size_name span').first()));
+  check('the buy-box price is not', !isInVariantBlock($, $('#apexPriceToPay span').first()));
+  check('a variant price is skipped by the buy-box reader',
+    !/19,999/.test(String(firstBuyboxText($, ['#twister .a-offscreen', '#apexPriceToPay .a-offscreen']) || '')));
+
+  // And stock: the sibling variant's "Currently unavailable" must not become ours.
+  const $s = cheerio.load(`
+    <div id="desktop_buybox">
+      <div id="availability"><span class="a-color-success">In stock</span></div>
+      <div id="twister"><div id="variation_size_name">
+        <span>4GB + 128GB</span><span>In stock</span>
+        <span>6GB + 128GB</span><span>Currently unavailable.</span>
+      </div></div>
+    </div>`);
+  check('a sibling variant being unavailable does NOT mark the product out of stock',
+    detectOutOfStock($s) === false);
+  check('a genuinely unavailable listing IS still detected',
+    detectOutOfStock(cheerio.load(`<div id="availability">Currently unavailable. We don't know when or if this item will be back in stock.</div>`)) === true);
+}
+
+
 console.log(passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

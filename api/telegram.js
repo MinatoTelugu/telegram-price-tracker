@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-132 (2026-10-12)';
+const BUILD = 'names-133 (2026-10-12)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -312,6 +312,24 @@ function isRateLimited(userId) {
  *   Click /stop_<TOKEN> to stop this product.
  *   _______________________________________
  */
+/**
+ * A last-known-good copy of each user's tracking list.
+ *
+ * /list reads one query, but it can still be refused if the daily quota is
+ * already spent by the background job. When that happens the user is left with
+ * an apology instead of their list — and their list is exactly the thing the bot
+ * exists to show. So the last list we successfully built is kept in memory and
+ * handed back when the database refuses.
+ *
+ * Two windows, deliberately different:
+ *   - inside LIST_CACHE_MINUTES (15) we serve it WITHOUT touching the database,
+ *     which also removes /list from the read budget entirely;
+ *   - when the database refuses, we serve it however old it is, because a
+ *     slightly stale list beats no list. It is labelled so nobody is misled.
+ */
+const LIST_CACHE = new Map();
+const LIST_CACHE_MINUTES = Math.max(1, parseInt(process.env.LIST_CACHE_MINUTES || '15', 10));
+
 async function sendTrackingList(ctx) {
   try {
     if (!ctx.from) return;
@@ -320,6 +338,13 @@ async function sendTrackingList(ctx) {
       return;
     }
     const uid = String(ctx.from.id);
+
+    // A recent copy costs nothing and cannot be refused.
+    const cached = LIST_CACHE.get(uid);
+    if (cached && Date.now() - cached.at < LIST_CACHE_MINUTES * 60 * 1000) {
+      await ctx.reply(cached.text, cached.opts);
+      return;
+    }
 
     // Only ACTIVELY tracked products. Stopped products are not listed at all,
     // and they are not counted in the total.
@@ -470,7 +495,9 @@ async function sendTrackingList(ctx) {
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
-    await ctx.reply(lines.join('\n'), opts);
+    const text = lines.join('\n');
+    LIST_CACHE.set(uid, { text, opts, at: Date.now() });
+    await ctx.reply(text, opts);
   } catch (err) {
     console.error('sendTrackingList failed', err);
     // NEVER LEAVE THE USER STARING AT NOTHING.
@@ -480,6 +507,18 @@ async function sendTrackingList(ctx) {
     // trace was a stack trace in the Koyeb log. A command that fails silently is
     // indistinguishable from a bot that is down.
     try {
+      const stale = ctx.from && LIST_CACHE.get(String(ctx.from.id));
+      if (stale) {
+        // The database is refusing us, but we already know what this list looked
+        // like. Show it, and say plainly that it is the last known copy rather
+        // than pretending it is live.
+        const when = new Date(stale.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+        await ctx.reply(
+          stale.text + '\n\n<i>(Last saved copy — the database is at its limit right now, so this may be slightly out of date. Taken ' + when + '.)</i>',
+          stale.opts
+        );
+        return;
+      }
       await ctx.reply(
         isQuotaError(err)
           ? '⚠️ <b>Database limit reached</b>\n\n' +

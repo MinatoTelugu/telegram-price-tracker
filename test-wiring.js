@@ -826,6 +826,28 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// The cron read a flat 500-document page on EVERY run just to sort in memory
+// and keep 20. Hourly that is ~12k reads/day, 480 of every 500 discarded.
+// /list also used to fail outright when the quota was spent, so the one command
+// whose whole job is to show a user their list was the one that showed nothing.
+// ---------------------------------------------------------------------------
+{
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('the cron no longer reads a flat 500-document page', !/SCAN_LIMIT = 500/.test(cron));
+  check('...the scan is sized from the batch', /BATCH_SIZE \* 4/.test(cron));
+  check('...and can be overridden', /CRON_SCAN_LIMIT/.test(cron));
+  check('...the ordering is done by the database', /orderBy\('lastCheckedAt', 'asc'\)/.test(cron));
+  check('...with a fallback if the order is refused', /falling back to an unordered page/.test(cron));
+
+  check('/list keeps a last-known-good copy', /const LIST_CACHE = new Map\(\)/.test(tg));
+  check('...served without a database read while fresh', /LIST_CACHE_MINUTES \* 60 \* 1000/.test(tg));
+  check('...and served stale when the database refuses', /Last saved copy/.test(tg));
+  check('...rather than only apologising', /const stale = ctx\.from && LIST_CACHE\.get/.test(tg));
+}
+
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

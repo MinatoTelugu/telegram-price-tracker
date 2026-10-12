@@ -66,7 +66,19 @@ const HISTORY_DAYS = 30;
 // repaired without anyone having to remember a command. Set CLEAN_HOUR=-1 to
 // switch it off and drive it by hand instead.
 const CLEAN_HOUR = parseInt(process.env.CLEAN_HOUR || '3', 10);
-const SCAN_LIMIT = 500; // hard cap on docs read per run (avoids an index)
+// How many product documents ONE run may read.
+//
+// This used to be 500 — a flat page of the whole collection, read on every run
+// just to pick the 20 to check. Hourly, that is ~12,000 document reads a day,
+// and 480 of every 500 were thrown away: they existed only so the code could
+// sort in memory and take the oldest 20. On a 20k/day free tier that is the
+// quota, spent before the first product is even checked.
+//
+// A single-field orderBy needs no composite index (Firestore indexes every
+// field by default), so the ordering is now done by the database and only the
+// documents we will actually use are fetched. 4x the batch is enough headroom
+// for stopped products to be filtered out without starving a run.
+const SCAN_LIMIT = Math.max(80, parseInt(process.env.CRON_SCAN_LIMIT || '0', 10) || BATCH_SIZE * 4);
 
 const FieldValue = (admin && admin.firestore && admin.firestore.FieldValue) || null;
 
@@ -866,7 +878,23 @@ const runCron = async (req, res) => {
     // queries by subscribers, not active) still showed the products. Treating a
     // missing `active` as "active" means a product is only skipped when it has
     // been explicitly stopped.
-    const snap = await db.collection(COLLECTIONS.PRODUCTS).limit(SCAN_LIMIT).get();
+    // Ask the database for the oldest-checked products directly. One field, so
+    // no composite index is required; only SCAN_LIMIT documents come back.
+    let snap;
+    try {
+      snap = await db
+        .collection(COLLECTIONS.PRODUCTS)
+        .orderBy('lastCheckedAt', 'asc')
+        .limit(SCAN_LIMIT)
+        .get();
+    } catch (err) {
+      // Documents written before lastCheckedAt existed sort before everything,
+      // and a project with no such field can still refuse the orderBy. Fall back
+      // to an unordered page rather than failing the run — it costs more reads,
+      // but a working check beats a tidy query.
+      console.warn('cron: ordered scan refused (' + err.message + ') — falling back to an unordered page');
+      snap = await db.collection(COLLECTIONS.PRODUCTS).limit(SCAN_LIMIT).get();
+    }
     const totalProducts = snap.docs.length;
     const activeDocs = snap.docs.filter((d) => {
       const v = d.data();

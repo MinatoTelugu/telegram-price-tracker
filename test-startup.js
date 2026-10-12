@@ -147,5 +147,17 @@ check('the rupee fallback skips exchange/EMI figures', scr.includes('firstRealPr
 }
 
 
+// ---------------------------------------------------------------------------
+// From the live log: "Polling conflict: ANOTHER copy of this bot is polling".
+// Stopping the timers is not enough — a tick already in flight, or the startup
+// call racing the conflict check, would still run the whole job.
+// ---------------------------------------------------------------------------
+{
+  const src = fs.readFileSync(__dirname + '/server.js', 'utf8');
+  check('runJob refuses while this instance does not own the poll',
+    /async function runJob\(name\) \{[\s\S]{0,400}if \(jobsPaused\) \{/.test(src));
+  check('...and says so rather than failing quietly', /skipped \(this instance does not own the poll\)/.test(src));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

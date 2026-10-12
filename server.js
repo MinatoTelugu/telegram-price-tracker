@@ -223,6 +223,15 @@ function callHandler(handler, headers) {
 }
 
 async function runJob(name) {
+  // Belt AND braces. Stopping the timers is not enough on its own: a tick that
+  // was already in flight when the poll conflict was detected, or the startup
+  // call racing the conflict check, would still run the whole job. The loser of
+  // a poll conflict must not touch the database AT ALL — it is the duplicate
+  // instance that doubles every read and write in the first place.
+  if (jobsPaused) {
+    console.log(name + ' -> skipped (this instance does not own the poll)');
+    return;
+  }
   const handler = loadJob(name);
   if (!handler) return;
   const r = await callHandler(handler, { host: 'localhost' });

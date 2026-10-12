@@ -303,6 +303,27 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
 }
 
 
+// ---------------------------------------------------------------------------
+// From the live log: a women's kaftan was dropped as "not_fashion:unrecognised",
+// and every FASHION deal logged image=NONE while phone deals had images. The
+// fashion cards lazy-load through srcset/data-src on a bare <img>; only the
+// phone-card classes were listed.
+// ---------------------------------------------------------------------------
+{
+  const d = require(__dirname + '/lib/deals.js');
+  const f = d.fashionCheck;
+  check('a women\'s kaftan is fashion', !!(f('Self Design Cotton Blend Women Kaftan') || {}).ok);
+  check('an anarkali suit is fashion', !!(f('Anarkali Suit Set') || {}).ok);
+  check('a curtain is still blocked', !((f('153 cm Window Polyester Curtain') || {}).ok));
+  check('a laptop backpack is still blocked', !((f('Large 60 L Laptop Backpack') || {}).ok));
+  check('a nail polish is still blocked', !((f('Gloss Gel High Shine Nail Polish') || {}).ok));
+  check('a phone is still allowed', !!(f('Samsung Galaxy F07 (Green, 64 GB)') || {}).ok);
+
+  const src = fs.readFileSync(__dirname + '/lib/deals.js', 'utf8');
+  check('fashion cards\' lazy images are matched', /'img\[srcset\]'/.test(src) && /'img\[data-src\]'/.test(src));
+  check('...and placeholders are still rejected', /if \(\/\^data:\/i\.test\(v\)\) continue;/.test(src));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

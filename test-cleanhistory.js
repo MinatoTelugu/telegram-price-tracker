@@ -166,7 +166,11 @@ function fakeFirestore(products) {
     const docRef = {
       set: async (update, o) => writes.updates.push({ id: p.id, update, opts: o }),
       collection: () => ({
-        orderBy: () => ({ get: async () => ({ docs: histDocs }) }),
+        // limit() is now part of the chain — the read is capped so a repair pass
+        // cannot pull tens of thousands of documents in one burst.
+        orderBy: () => ({ limit: () => ({ get: async () => ({ docs: histDocs }) }),
+                          get: async () => ({ docs: histDocs }) }),
+        limit: () => ({ get: async () => ({ docs: histDocs }) }),
         get: async () => ({ docs: histDocs }),
       }),
     };

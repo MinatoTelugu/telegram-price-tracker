@@ -188,6 +188,36 @@ check('...and it stops when the budget is spent', /hop budget spent/.test(af));
 check('...and each hop is capped by what is left of it', /Math\.min\(2500, hopDeadline - Date\.now\(\)\)/.test(af));
 check('the caller has a second, outer bound', /setTimeout\(\(\) => resolve\(null\), 8000\)/.test(tg));
 
+// ---------------------------------------------------------------------------
+// THE READER ROUTE. Reported: dl.flipkart.com/s/... still failed after the
+// deadline was fixed — the replies were fast, but still "I could not open that
+// short link". The expansion had four routes and NONE used the reader, even
+// though the reader is the one service that fetches from servers other than
+// ours. dl.flipkart.com refuses datacenter IPs, so every route going out from
+// this host fails; the reader is the one that does not.
+// ---------------------------------------------------------------------------
+{
+  const rd = fs.readFileSync(__dirname + '/lib/reader.js', 'utf8');
+  const { parseReaderBody } = require(__dirname + '/lib/reader.js');
+  const body = [
+    'Title: LAVA Virat Curve 5G (128 GB Storage, 6 GB RAM) Online at Best Price On Flipkart.com',
+    '',
+    'URL Source: https://www.flipkart.com/lava-virat-curve-5g-makrana-ivory-128-gb/p/itmabc123?pid=MOBXYZ',
+    '',
+    'Markdown Content:',
+    'Buy LAVA Virat Curve 5G online...',
+  ].join('\n');
+  const r = parseReaderBody(body);
+  check('the reader keeps the URL it landed on', /resolvedUrl/.test(rd));
+  check('...and it is the canonical store URL',
+    /flipkart\.com\/.*\/p\/itm/.test(String(r.resolvedUrl)), String(r.resolvedUrl));
+  check('...while the title still comes through', /LAVA Virat/.test(String(r.title)));
+  check('the reader is now a route in the expansion', /expanded via the reader/.test(sl));
+  check('...and it is tried before search', sl.indexOf('via the READER') < sl.indexOf('via the search API'));
+  check('...with a bounded timeout', /fetchReadablePage\(raw, \{ timeoutMs: 4500 \}\)/.test(sl));
+  check('...and its answer is validated as a store URL', /acceptExpansion\(page\.resolvedUrl\)/.test(sl));
+}
+
 // The behaviour, with a deliberately slow route rather than the network.
 const started = Date.now();
 Promise.race([

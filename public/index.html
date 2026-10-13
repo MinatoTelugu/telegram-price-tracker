@@ -233,6 +233,20 @@
     </section>
   </section>
 
+  <!-- CATEGORY-AWARE TRENDING DEALS
+       The heading and the contents both follow the product being viewed. The
+       category is inferred from the product title server-side and handed back
+       with the price history, so nothing here has to guess. -->
+  <section id="trending" class="hidden mt-6">
+    <div class="flex items-center justify-between mb-2.5">
+      <h2 class="text-sm font-black text-emerald-300 uppercase tracking-wider">
+        <i class="fa-solid fa-fire mr-1.5"></i><span id="trending-title">Trending Deals</span>
+      </h2>
+      <span id="trending-note" class="text-[10px] text-slate-500"></span>
+    </div>
+    <div id="trending-grid" class="grid grid-cols-2 gap-2.5"></div>
+  </section>
+
 </main>
 
 <!-- STICKY BOTTOM -->
@@ -595,16 +609,18 @@ function load(id) {
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (!d || !d.ok) {
-        hide($('result')); hide($('bottom'));
+        hide($('result')); hide($('bottom')); hide($('trending'));
         note(d && d.error === 'not_found'
           ? 'No product with that id. Open this page from the bot’s Price History button.'
           : 'Could not load that product just now. Please try again.');
         return;
       }
       render(id, d.product, Array.isArray(d.history) ? d.history : []);
+      // Deals that match what this product IS, not a generic list.
+      renderDeals(d.product.category, d.product.categoryLabel, d.product.categoryConfidence);
     })
     .catch(function () {
-      hide($('result')); hide($('bottom'));
+      hide($('result')); hide($('bottom')); hide($('trending'));
       note('Could not load the price history just now. Please try again.');
     });
 }
@@ -625,6 +641,69 @@ function shareLink() {
   if (navigator.share) { navigator.share({ url: url }).catch(function () {}); return; }
   if (navigator.clipboard) { navigator.clipboard.writeText(url).then(function () { triggerToast('Link copied'); }); return; }
   triggerToast(url);
+}
+
+/**
+ * Trending deals for the category of the product being viewed.
+ *
+ * The category comes from the server with the price history — inferred from the
+ * product title — so this function never guesses. If the product has no
+ * confident category, the general feed is shown under its normal heading rather
+ * than a heading that would be a lie.
+ */
+var DEALS_API = '/api/deals?dryRun=1&limit=6';
+var CATEGORY_HEADINGS = {
+  mobile: 'Trending Mobile Deals',
+  electronics: 'Trending Electronics Deals',
+  appliances: 'Trending Appliance Deals',
+  fashion: 'Trending Fashion Deals',
+  home: 'Trending Home Deals',
+  beauty: 'Trending Beauty Deals'
+};
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function renderDeals(category, label, confidence) {
+  var section = $('trending');
+  var grid = $('trending-grid');
+  if (!section || !grid) return;
+
+  // Below this we are guessing, and a wrong heading is worse than a general one.
+  var confident = category && category !== 'other' && (confidence === undefined || confidence >= 0.5);
+  var q = confident ? DEALS_API + '&category=' + encodeURIComponent(category) : DEALS_API;
+  $('trending-title').innerText =
+    confident && CATEGORY_HEADINGS[category] ? CATEGORY_HEADINGS[category] : 'Trending Deals';
+
+  fetch(q)
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      var deals = (d && Array.isArray(d.deals) ? d.deals : []).filter(function (x) {
+        return x && x.title && x.price != null;
+      });
+      if (!deals.length) { hide(section); return; }
+      grid.innerHTML = deals.slice(0, 6).map(function (x) {
+        var img = x.imageUrl
+          ? '<img src="' + esc(x.imageUrl) + '" alt="" loading="lazy" class="w-full h-24 object-contain bg-slate-950 rounded-lg mb-2" onerror="this.style.display=\'none\'">'
+          : '<div class="w-full h-24 bg-slate-950 rounded-lg mb-2"></div>';
+        var pct = x.discount ? '<span class="text-[10px] font-black text-amber-300">' + Math.round(x.discount) + '% OFF</span>' : '';
+        return (
+          '<a href="' + esc(x.url || x.affiliateUrl || '#') + '" target="_blank" rel="noopener" ' +
+          'class="block bg-slate-900/70 border border-emerald-500/20 rounded-xl p-2.5 hover:border-emerald-400/50 transition">' +
+          img +
+          '<div class="text-[11px] text-slate-200 leading-snug line-clamp-2 h-8 overflow-hidden">' + esc(x.title) + '</div>' +
+          '<div class="flex items-center justify-between mt-1.5">' +
+          '<span class="text-xs font-black text-emerald-300">₹' + Number(x.price).toLocaleString('en-IN') + '</span>' + pct +
+          '</div></a>'
+        );
+      }).join('');
+      $('trending-note').innerText = confident ? 'based on this product' : '';
+      show(section);
+    })
+    .catch(function () { hide(section); });
 }
 
 (function start() {

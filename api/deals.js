@@ -19,6 +19,8 @@
  *                             (DEALS_CHANNEL_ID / TELEGRAM_CHANNEL_ID still accepted)
  *   MIN_DISCOUNT / DEALS_MIN_DISCOUNT -> threshold % (default 20)
  *   ?minDiscount=NN        -> per-run override
+ *   ?category=mobile       -> scrape the listing pages for that category
+ *                             (used by the website's Trending Deals section)
  *   DEALS_MAX_PER_RUN      -> posts per run (default 5)
  *   DEALS_REPOST_DAYS      -> don't repost a deal within N days (default 30)
  *   DEALS_SOURCE_URLS      -> comma-separated listing pages to scrape
@@ -489,7 +491,14 @@ module.exports = async (req, res) => {
       console.error('deals: channel check FAILED for ' + channelId() + ' — ' + channel.error);
     }
 
-    const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4 });
+    // ?category=mobile steers the scrape toward the category the viewer is
+    // looking at on the website. The channel post ignores it and keeps the
+    // general feed, so this only changes what the web UI is shown.
+    const category = req.query && req.query.category
+      ? String(req.query.category).toLowerCase().replace(/[^a-z]/g, '').slice(0, 20)
+      : null;
+    if (category) console.log('deals: steered to category "' + category + '"');
+    const scan = await discoverDealsDetailed({ minDiscount, limit: MAX_PER_RUN * 4, category });
 
     // FASHION ONLY.
     //
@@ -540,7 +549,7 @@ module.exports = async (req, res) => {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(
-        JSON.stringify({ ok: true, dryRun: true, channel: channelId(), minDiscount, found: deals.length, deals })
+        JSON.stringify({ ok: true, dryRun: true, channel: channelId(), minDiscount, category, found: deals.length, deals })
       );
       return;
     }

@@ -11,7 +11,8 @@
  * ---------------------------------------------------------------------------
  */
 
-const { db, COLLECTIONS } = require('../lib/firebase');
+const { db, COLLECTIONS } = require('../lib/firebase')
+const { categoryFromTitle } = require('../lib/category');
 
 const HISTORY_LIMIT = 200; // plenty for 30 days at 4 checks/day
 
@@ -72,6 +73,13 @@ module.exports = async (req, res) => {
             data.lastCheckedAt && data.lastCheckedAt.toMillis ? data.lastCheckedAt.toMillis() : null,
           affiliateUrl: data.affiliateUrl || null,
           cleanUrl: data.cleanUrl || null,
+          // Inferred from the title, so the page can ask for deals that match
+          // what the viewer is actually looking at. Confidence is sent too: the
+          // page treats a low-confidence answer as "no category" rather than
+          // acting on a guess.
+          category: categoryFromTitle(data.title || data.productId || '').id,
+          categoryLabel: categoryFromTitle(data.title || data.productId || '').label,
+          categoryConfidence: categoryFromTitle(data.title || data.productId || '').confidence,
         },
         history,
       })

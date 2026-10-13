@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-142 (2026-10-13)';
+const BUILD = 'names-143 (2026-10-13)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -2239,7 +2239,14 @@ function registerHandlers(bot) {
       // instead of each path discovering the problem separately.
       if (isShortLink(url)) {
         const expandStart = Date.now();
-        const expanded = await expandShortLink(url).catch(() => null);
+        // Second bound. expandShortLink has its own deadline, but this is the
+        // call that holds the user's request open, so it gets a ceiling of its
+        // own: a belt-and-braces bound is cheap, and the failure it prevents —
+        // the whole bot unresponsive for one bad link — is expensive.
+        const expanded = await Promise.race([
+          expandShortLink(url).catch(() => null),
+          new Promise((resolve) => setTimeout(() => resolve(null), 8000)),
+        ]).catch(() => null);
         console.log('track: short-link expansion took ' + (Date.now() - expandStart) + 'ms');
         if (expanded && expanded !== url) {
           console.log('track: expanded short link -> ' + String(expanded).slice(0, 90));

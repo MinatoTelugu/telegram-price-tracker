@@ -165,6 +165,39 @@ check(
   check('it is exported for testing', /followRedirects,/.test(src));
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
+// ---------------------------------------------------------------------------
+// THE TWO-MINUTE HANG. Reported: a Flipkart short link froze the bot for close
+// to two minutes. Every route was individually bounded — 12s for the redirect
+// follow, 2.5s x 8 for the manual hops, then the converter, metadata and search
+// — but they run IN SEQUENCE and nothing bounded their SUM. Four bounded waits
+// add up to an unbounded one.
+// ---------------------------------------------------------------------------
+const sl = fs.readFileSync(__dirname + '/lib/shortlink.js', 'utf8');
+const af = fs.readFileSync(__dirname + '/lib/affiliate.js', 'utf8');
+const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+const mod = require(__dirname + '/lib/shortlink.js');
+
+check('a hard ceiling exists on a whole expansion', /EXPAND_DEADLINE_MS/.test(sl));
+check('...and it is within the 5-8s asked for', mod.EXPAND_DEADLINE_MS >= 5000 && mod.EXPAND_DEADLINE_MS <= 8000, 'is ' + mod.EXPAND_DEADLINE_MS);
+check('...the caller is released by a race, not by the slowest route', /Promise\.race\(\[expandShortLinkInner\(raw\), deadline\]\)/.test(sl));
+check('...and the timer is always cleared', /clearTimeout\(timer\)/.test(sl));
+check('the redirect follow budget is no longer 12s', !/SHORTLINK_TIMEOUT_MS \|\| '12000'/.test(af));
+check('...it is within the requested window', /SHORTLINK_TIMEOUT_MS \|\| '5000'/.test(af));
+check('the hop loop has a TOTAL budget, not 2.5s per hop', /hopDeadline/.test(af));
+check('...and it stops when the budget is spent', /hop budget spent/.test(af));
+check('...and each hop is capped by what is left of it', /Math\.min\(2500, hopDeadline - Date\.now\(\)\)/.test(af));
+check('the caller has a second, outer bound', /setTimeout\(\(\) => resolve\(null\), 8000\)/.test(tg));
+
+// The behaviour, with a deliberately slow route rather than the network.
+const started = Date.now();
+Promise.race([
+  new Promise((r) => setTimeout(() => r('too late'), 60000)),
+  new Promise((r) => setTimeout(() => r(null), mod.EXPAND_DEADLINE_MS)),
+]).then((v) => {
+  const ms = Date.now() - started;
+  check('a slow route releases the caller in seconds, not minutes', ms <= mod.EXPAND_DEADLINE_MS + 500, 'took ' + ms + 'ms');
+  check('...returning null so the caller can fail cleanly', v === null);
+  console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
+});
 })();

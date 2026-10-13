@@ -147,6 +147,24 @@ check(
   check('with every route unavailable it returns null (never a wrong url)', none === null);
   metadataWorks = true;
 
-  console.log(`\n${pass} passed, ${fail} failed`);
+  // ---------------------------------------------------------------------------
+// dl.flipkart.com is slow and sometimes answers with an interstitial before it
+// redirects. The manual hop loop gives each hop 2.5s, which was not enough, and
+// the user saw "I could not open that short link (it may have expired)."
+// The client now follows the chain itself, with the manual hops as fallback.
+// ---------------------------------------------------------------------------
+{
+  const src = fs.readFileSync(__dirname + '/lib/affiliate.js', 'utf8');
+  check('the client follows the redirect chain', /async function followRedirects\(url, maxHops\)/.test(src));
+  check('...with a real redirect budget', /maxRedirects: maxHops \|\| 10/.test(src));
+  check('...and a timeout that suits a slow store', /SHORTLINK_TIMEOUT_MS/.test(src));
+  check('...reading the final URL from the response', /responseUrl/.test(src));
+  check('...and an interstitial body is searched for the destination', /found the destination in the body/.test(src));
+  check('...it runs BEFORE the manual hop loop', /0\) Let the client follow the chain/.test(src));
+  check('...and the manual hops remain as a fallback', /for \(let hop = 0; hop < 8; hop\+\+\)/.test(src));
+  check('it is exported for testing', /followRedirects,/.test(src));
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

@@ -378,7 +378,12 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('"Currently unavailable" reads as out of stock',
     availabilityFromText('Currently unavailable') === true);
   check('"Out of stock" reads as out of stock', availabilityFromText('Out of stock') === true);
-  check('a bare "Notify Me" is too weak to judge', availabilityFromText('Notify Me') === null);
+  // CORRECTED. This used to assert that a bare "Notify Me" was too weak to
+  // judge. A real Flipkart listing proved otherwise: the page read "Out of
+  // stock" twice with a "Notify Me" button where "Buy Now" belongs, and the
+  // bot reported STOCK UNKNOWN. On Flipkart "Notify Me" IS the out-of-stock
+  // CTA — it replaces the buy button, so it is a statement, not a hint.
+  check('a bare "Notify Me" reads as out of stock', availabilityFromText('Notify Me') === true);
   check('an unstated page yields null', availabilityFromText('nothing here') === null);
 
   // The last-resort path must carry both through.

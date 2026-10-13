@@ -234,5 +234,42 @@ console.log('');
 }
 
 
+// ---------------------------------------------------------------------------
+// FLIPKART OUT OF STOCK. Reported: a listing plainly reading "Out of stock"
+// twice with a "Notify Me" button where "Buy Now" belongs came back
+// STOCK UNKNOWN. Cause: every buy-box selector was an AMAZON id — #availability,
+// #buybox, #addToCart — none of which exist on Flipkart. The buy box read empty,
+// so the function fell through to "we do not know".
+// ---------------------------------------------------------------------------
+{
+  const { detectOutOfStock, availabilityFromText, FLIPKART_VARIANT_SELECTOR } = scraper;
+  const load = (h) => cheerio.load(h);
+
+  check('a Flipkart variant selector exists', typeof FLIPKART_VARIANT_SELECTOR === 'string' && FLIPKART_VARIANT_SELECTOR.length > 0);
+  check('the reported page: Out of stock + Notify Me',
+    detectOutOfStock(load(`<div id="container"><div>Out of stock</div><div>Out of stock</div>
+      <button class="_2KpZ6l">Notify Me</button></div>`)) === true);
+  check('a Flipkart listing with Buy Now is in stock',
+    detectOutOfStock(load(`<div id="container"><button class="_2KpZ6l">Buy Now</button><button>Add to cart</button></div>`)) === false);
+  check('a sibling variant being out of stock does not mark the listing out of stock',
+    detectOutOfStock(load(`<div id="container"><div class="swatch"><span>128 GB + 6 GB</span><span>Out of stock</span></div>
+      <button class="_2KpZ6l">Buy Now</button></div>`)) === false);
+  check('bare "out of stock" text with no button is still detected',
+    detectOutOfStock(load(`<div id="container"><div>Out of stock</div></div>`)) === true);
+
+  // The text fallback, used when the page is not readable at all.
+  check('the text reader knows a bare "Notify Me"',
+    availabilityFromText('Iqoo Z10 Lite 5G Out of stock Out of stock Notify Me') === true);
+  check('...and still knows in-stock wording', availabilityFromText('Add to cart Buy Now In stock') === false);
+  check('...and still knows "currently unavailable"', availabilityFromText('This item is currently unavailable') === true);
+
+  // Amazon must be unharmed by any of this.
+  check('Amazon buy box out of stock still detected',
+    detectOutOfStock(load(`<div id="availability">Currently unavailable. We don't know when or if this item will be back in stock.</div>`)) === true);
+  check('Amazon in-stock buy box still detected',
+    detectOutOfStock(load(`<div id="availability"><span>In stock</span></div>`)) === false);
+}
+
+
 console.log(passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

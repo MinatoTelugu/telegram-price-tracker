@@ -89,7 +89,7 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   check('summary ok + processed 1', out.ok === true && out.processed === 1);
   check('price drop detected', out.results[0].oldPrice === 1000 && out.results[0].price === 900);
   check('alert sent to 2 subscribers', out.alertsSent === 2 && calls.messages.length === 2);
-  check('alert text mentions both prices', calls.messages[0].text.includes('1000') && calls.messages[0].text.includes('900'));
+  check('alert text mentions both prices', calls.messages[0].text.includes('1,000') && calls.messages[0].text.includes('900'));
   check('history point appended', calls.history.length === 1 && calls.history[0].d.price === 900);
   check('product doc updated to new price', calls.sets.some((s) => s.d.lastPrice === 900));
 
@@ -181,10 +181,10 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
     calls.messages.some((m) => String(m.text).startsWith('🟢'))
   );
   check(
-    'the title and the price are each in their own blockquote',
+    'the alert is a card: header, store, product, price row',
     calls.messages.some((m) => {
       const t = String(m.text);
-      return (t.match(/<blockquote>/g) || []).length >= 2 && /<blockquote>[^<]*Current Price/.test(t);
+      return /ALERT<\/b>/.test(t) && /Current Price/.test(t) && /<b>[^<]*Flipkart<\/b>/.test(t);
     })
   );
   check(
@@ -228,7 +228,7 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   check('the restock alert fires after an out-of-stock record', JSON.parse(resBack.body).alertsSent === 1);
   check(
     'restock alert carries the product and the new price',
-    calls.messages.some((m) => String(m.text).includes('BACK IN STOCK ALERT') && String(m.text).includes('18999'))
+    calls.messages.some((m) => String(m.text).includes('BACK IN STOCK ALERT') && String(m.text).includes('18,999'))
   );
 
   // 7. a product with NO `active` field must still be checked (the old query
@@ -299,7 +299,7 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   const alertMsg = calls.messages[0] || {};
   const kb = JSON.stringify(alertMsg.reply_markup || {});
   check('price-drop alert carries a keyboard', Boolean(alertMsg.reply_markup));
-  check('alert button: Buy Now (affiliate url)', kb.includes('Buy Now') && kb.includes('https://fkrt.clnk.in/ABC'));
+  check('alert button: Buy on Flipkart (affiliate url)', kb.includes('Buy on Flipkart') && kb.includes('https://fkrt.clnk.in/ABC'));
   check('alert button: Stop Tracking', kb.includes('Stop Tracking') && kb.includes('untrack:flipkart_BTN1'));
   check(
     'alert button: Price History opens the web chart',
@@ -323,14 +323,14 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
     'restock keyboard has all four actions',
     (function () {
       const k = JSON.stringify((calls.messages[0] || {}).reply_markup || {});
-      return k.includes('Buy Now') && k.includes('Stop Tracking') && k.includes('Price History') && k.includes("Today's Deals");
+      return /Buy on (Flipkart|Amazon)|Buy Now/.test(k) && k.includes('Stop Tracking') && k.includes('Price History') && k.includes("Today's Deals");
     })()
   );
 
   // A product with NO affiliate url still gets all four (Buy falls back to the clean url).
   const { alertKeyboard } = require('./api/cron.js');
   const kbNoAff = JSON.stringify(alertKeyboard('flipkart_BTN3', { cleanUrl: 'https://www.flipkart.com/x/p/itmbtn3' }));
-  check('no affiliate link -> Buy Now still present (clean url)', kbNoAff.includes('Buy Now') && kbNoAff.includes('https://www.flipkart.com/x/p/itmbtn3'));
+  check('no affiliate link -> the buy button still appears (clean url)', kbNoAff.includes('Buy Now') && kbNoAff.includes('https://www.flipkart.com/x/p/itmbtn3'));
   check('no affiliate link -> still four actions', kbNoAff.includes('Stop Tracking') && kbNoAff.includes('Price History') && kbNoAff.includes("Today's Deals"));
 
   // 11. Alert DELIVERY: a transient failure must not cost the user their alert.

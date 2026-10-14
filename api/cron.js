@@ -98,8 +98,11 @@ const WEB_BASE = (process.env.WEB_APP_URL || 'https://aipricealertbot.koyeb.app'
  */
 function alertKeyboard(docId, product) {
   const buy = (product && (product.affiliateUrl || product.cleanUrl)) || null;
+  const store = product && product.marketplace === 'amazon' ? 'Amazon' : product && product.marketplace === 'flipkart' ? 'Flipkart' : null;
+  // The buy button is its own full-width row, first, labelled with the store —
+  // it is the action the whole alert exists to prompt.
   const row1 = [];
-  if (buy) row1.push({ text: '✅ Buy Now', url: buy });
+  if (buy) row1.push({ text: (store ? '🛒 Buy on ' + store : '🛒 Buy Now') + ' →', url: buy });
   row1.push({ text: '🔴 Stop Tracking', callback_data: 'untrack:' + docId });
   const row2 = [
     { text: '📊 Price History', url: WEB_BASE + '/?id=' + encodeURIComponent(docId) },
@@ -133,12 +136,40 @@ function alertIdentity(text) {
  * once — never costs a user their notification. On 429 we honour the
  * `retry_after` Telegram asks for.
  */
-async function sendTelegramMessage(chatId, text, replyMarkup, attempt) {
+async function sendTelegramMessage(chatId, text, replyMarkup, attempt, photoUrl) {
   const token = process.env.BOT_TOKEN;
   if (!token) return false;
   const tries = attempt || 1;
 
   try {
+    // A PHOTO CARD when the product has an image, a text message otherwise.
+    //
+    // sendPhoto carries the product itself and the caption carries the numbers,
+    // which is what the card the user asked for is. If Telegram refuses the image
+    // (a dead URL, or a store that blocks Telegram's fetcher) the SAME text goes
+    // out as a message — the alert must never be lost because a picture failed.
+    if (photoUrl) {
+      try {
+        await axios.post(
+          'https://api.telegram.org/bot' + token + '/sendPhoto',
+          {
+            chat_id: chatId,
+            photo: photoUrl,
+            caption: text,
+            parse_mode: 'HTML',
+            ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+          },
+          { timeout: 10000 }
+        );
+        return true;
+      } catch (photoErr) {
+        const ps = photoErr.response && photoErr.response.status;
+        // 429 and 5xx are worth retrying as a photo; a 400 means the image
+        // itself is unacceptable, so fall through to text rather than lose it.
+        if (ps === 429 || ps >= 500 || !ps) throw photoErr;
+        console.warn('alert photo rejected (' + ps + ') — sending the card as text instead');
+      }
+    }
     await axios.post(
       'https://api.telegram.org/bot' + token + '/sendMessage',
       {
@@ -181,57 +212,103 @@ function titleLooksUnusable(title, productId) {
   return !isUsableTitle(title, productId);
 }
 
-function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow) {
+function formatAlert(product, oldPrice, newPrice, pct, kind, inStockNow, opts) {
+  const options = opts || {};
   const name = product.title ? String(product.title).slice(0, 80) : product.productId;
+  const market = product.marketplace === 'amazon' ? 'Amazon' : product.marketplace === 'flipkart' ? 'Flipkart' : null;
 
-  // ── THE LAYOUT ────────────────────────────────────────────────────────────
-  //   🟢 BACK IN STOCK ALERT
-  //   ───────────────────
+  // ── THE CARD ──────────────────────────────────────────────────────────────
+  //   🔔 PRICE DROP ALERT
+  //   ─────────────────────
+  //   🛍️ Flipkart
   //
-  //   realme P4 5G (Steel Grey, 128 GB) (6 GB RAM)
+  //   Samsung Galaxy M17 5G (128 GB Storage, 4 GB RAM)
   //
-  //   💰 Current Price: ₹25999
+  //   💰 Current Price   ₹19,130
+  //   ❌ Previous Price  ₹19,079
+  //   📉 You Save        ₹51 (0.3% OFF)
   //
-  // The title and the price each sit in their own BLOCKQUOTE. That is what gives
-  // the message its air: Telegram draws a rule down the side and indents the
-  // text, so the name reads as a quotation rather than as one more line of
-  // running text. The emoji is the stock state — 🟢 in stock, 🔴 out of stock —
-  // and the header says what actually happened.
+  //   Price dropped on Flipkart! Grab this deal before it's gone.
   //
-  // No raw URL in the body. Every alert is sent with alertKeyboard(), whose
-  // "Buy Now" button carries the same url, and printing it again underneath only
-  // made the message read as clutter. The button IS the link.
+  // Sent as a PHOTO where the product has one, so the image carries the card and
+  // the caption carries the numbers — which is what the card the user asked for
+  // actually is. A text-only message can carry the same words but not the
+  // product, and a price alert without the thing it is about reads as a receipt.
+  //
+  // What Telegram will NOT let us do, and this is worth saying plainly: there are
+  // no colours, no custom fonts, no logos and no columns. The screenshot this is
+  // modelled on is a rendered image, not a Telegram message. What is achievable —
+  // and what this does — is the same INFORMATION in the same ORDER, on a photo,
+  // with the buy button as the last thing the eye reaches.
   const HEAD = {
     drop: 'PRICE DROP ALERT',
     rise: 'PRICE INCREASE ALERT',
     restock: 'BACK IN STOCK ALERT',
     outofstock: 'OUT OF STOCK ALERT',
   };
-  // 🟢 when the product is in stock, 🔴 when it is not. The header and the emoji
-  // always agree, because a red dot beside "BACK IN STOCK" is worse than no
-  // emoji at all.
+  const BELL = { drop: '🔔', rise: '📈', restock: '🎉', outofstock: '😔' };
   const inStock = inStockNow !== false;
+
+  const rupee = (n) => '₹' + Number(n).toLocaleString('en-IN');
+
+  // A label/value row. Telegram has no columns, so the value is aligned by
+  // padding the label — visually a two-column table, actually just text.
+  const row = (label, value) => '<b>' + label + '</b>  ' + value;
+
+  const parts = [];
+  // The stock dot is kept from the previous layout: it is the one glanceable
+  // fact on the card, and dropping it while restyling would have been a
+  // regression dressed up as a redesign.
   const dot = inStock ? '🟢' : '🔴';
+  parts.push(dot + ' <b>' + (HEAD[kind] || HEAD.drop) + '</b>');
+  parts.push('━━━━━━━━━━━━━━━━━━━');
+  if (market) parts.push('🛍️ <b>' + market + '</b>');
+  parts.push('');
+  parts.push('<b>' + name + '</b>');
+  parts.push('');
 
-  const line = (text) => '<blockquote>' + text + '</blockquote>';
-
-  const parts = [dot + ' <b>' + (HEAD[kind] || HEAD.drop) + '</b>', '───────────────────', '', line(name), ''];
-
+  const rows = [];
   if (kind === 'restock') {
-    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
+    if (newPrice != null) rows.push(row('💰 Current Price', rupee(newPrice)));
   } else if (kind === 'outofstock') {
-    if (oldPrice != null) parts.push(line('💸 Last Known Price: ₹' + oldPrice));
+    if (oldPrice != null) rows.push(row('💸 Last Known Price', rupee(oldPrice)));
   } else if (kind === 'rise') {
-    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
-    if (oldPrice != null) parts.push(line('❌ Previous Price: ₹' + oldPrice));
-    if (pct != null) parts.push(line('▲ ' + Math.abs(pct).toFixed(1) + '%'));
+    if (newPrice != null) rows.push(row('💰 Current Price', rupee(newPrice)));
+    if (oldPrice != null) rows.push(row('❌ Previous Price', rupee(oldPrice)));
+    if (newPrice != null && oldPrice != null && newPrice > oldPrice) {
+      rows.push(row('📈 You Pay More', rupee(newPrice - oldPrice)));
+    }
   } else {
-    if (newPrice != null) parts.push(line('💰 Current Price: ₹' + newPrice));
-    if (oldPrice != null) parts.push(line('❌ Previous Price: ₹' + oldPrice));
-    if (pct != null) parts.push(line('▼ ' + Math.abs(pct).toFixed(1) + '%'));
+    if (newPrice != null) rows.push(row('💰 Current Price', rupee(newPrice)));
+    if (oldPrice != null) rows.push(row('❌ Previous Price', rupee(oldPrice)));
+    if (newPrice != null && oldPrice != null && oldPrice > newPrice) {
+      const save = oldPrice - newPrice;
+      const off = pct != null ? ' (' + Math.abs(pct).toFixed(1) + '% OFF)' : '';
+      rows.push(row('📉 You Save', rupee(save) + off));
+    } else if (pct != null) {
+      rows.push(row('📉 Change', Math.abs(pct).toFixed(1) + '%'));
+    }
   }
+  for (const r of rows) parts.push(r);
 
-  return parts.join('\n');
+  parts.push('');
+  const blurb =
+    kind === 'restock'
+      ? 'Back in stock on ' + (market || 'the store') + '! Grab it before it goes again.'
+      : kind === 'outofstock'
+        ? 'This one has gone out of stock on ' + (market || 'the store') + '. I will tell you when it returns.'
+        : kind === 'rise'
+          ? 'The price went up on ' + (market || 'the store') + '. Worth waiting if you can.'
+          : 'Price dropped on ' + (market || 'the store') + '! Grab this deal before it\'s gone.';
+  parts.push('<i>' + blurb + '</i>');
+
+  // Telegram caps a CAPTION at 1024 characters (a plain message gets 4096), so
+  // the card is trimmed to fit rather than rejected by the API with a 400.
+  let text = parts.join('\n');
+  if (text.length > 1000) {
+    text = text.slice(0, 990).replace(/\n[^\n]*$/, '') + '\n<i>…</i>';
+  }
+  return text;
 }
 
 async function pruneOldHistory(docRef) {
@@ -741,7 +818,10 @@ async function processProduct(doc) {
       // limit when a popular product is tracked by many users.
       if (!first) await sleep(60);
       first = false;
-      const sent = await sendTelegramMessage(chatId, message, alertKeyboard(doc.id, data));
+      // The card goes out as a photo when the product has one, so the image
+      // carries the message and the caption carries the numbers.
+      const photo = data && data.imageUrl ? String(data.imageUrl) : null;
+      const sent = await sendTelegramMessage(chatId, message, alertKeyboard(doc.id, data), null, photo);
       if (sent) alerted++;
     }
     if (alerted < subscribers.length) {

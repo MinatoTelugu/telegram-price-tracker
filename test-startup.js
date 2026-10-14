@@ -98,8 +98,17 @@ check('the scraper no longer decides stock from a whole-page scan', (() => {
   const body = src.slice(src.indexOf('function detectOutOfStock'), src.indexOf('function priceFromTextMatch'));
   return !/\$\('body'\)\.text\(\)/.test(body) && /return false;/.test(body);
 })());
-check('the title and the price are each quoted in a blockquote',
-  /const line = \(text\) => '<blockquote>'/.test(cron) && /line\(name\)/.test(cron));
+// The card layout replaced the blockquote layout. The user asked for a design
+// modelled on a rendered card: a header, the store, the product, a price row and
+// a closing line — and sent as a PHOTO so the image carries it.
+check('the alert is a card, not a blockquote list',
+  /<b>' \+ \(HEAD\[kind\]/.test(cron) && !/const line = \(text\) => '<blockquote>'/.test(cron));
+check('...with the store named', /market\) parts\.push/.test(cron) && /\uD83D\uDECD/.test(JSON.parse('"\ud83d\udecd"')));
+check('...and a You Save row', /You Save/.test(cron));
+check('...and a closing line', /Grab this deal before it/.test(cron));
+check('...sent as a PHOTO when the product has an image', /sendPhoto/.test(cron));
+check('...falling back to text if the photo is refused', /sending the card as text instead/.test(cron));
+check('the buy button names the store', /Buy on ' \+ store/.test(cron));
 check('an identical alert is suppressed inside a cooldown window',
   /ALERT_COOLDOWN_MINUTES/.test(cron) && /suppressing a repeat alert/.test(cron));
 check('...and the cooldown remembers what was sent',

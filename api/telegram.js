@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-147 (2026-10-14)';
+const BUILD = 'names-148 (2026-10-14)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -2326,6 +2326,39 @@ function registerHandlers(bot) {
       const result = await convertAffiliateLink(url);
 
       if (!result.ok) {
+        // A SHORT LINK WE COULD NOT RESOLVE IS STILL A LINK TO TRACK.
+        //
+        // This used to reply "I could not open that short link" and stop. But the
+        // user gave us a Flipkart link; our failure to expand or convert it is
+        // OUR failure, not a reason to refuse the product. The share url is a
+        // valid Flipkart url, the scraper can try it again later, and the product
+        // gets tracked in the meantime instead of vanishing.
+        //
+        // Only a link from a store we do not support is a genuine refusal.
+        if (result.reason === 'shortlink_unresolved' && isShortLink(url)) {
+          console.warn('track: short link could not be resolved or converted — tracking the share url itself');
+          const salvage = {
+            ok: true,
+            marketplace: /amazon/i.test(url) ? 'amazon' : 'flipkart',
+            // The share code becomes the product id, so the document id is
+            // STABLE: the same link tracked twice updates one product rather
+            // than creating a second one each time.
+            productId: (function () {
+              const m = /\/s\/([A-Za-z0-9_-]+)/.exec(url);
+              return m ? 'share_' + m[1] : null;
+            })(),
+            cleanUrl: url,
+            affiliateUrl: null,
+            hasAffiliateTag: false,
+            originalUrl: url,
+            resolvedUrl: null,
+          };
+          const docId = await trackProduct(salvage, ctx.from, { title: null, price: null });
+          await finishPlaceholder(ctx, placeholder, '✅ Tracking that product. Opening the page now…', { parse_mode: 'HTML' });
+          enrichTracked(ctx, null, url, ctx.from, { title: null, price: null }).catch(() => {});
+          console.log('track: salvaged short link -> ' + docId);
+          return;
+        }
         await finishPlaceholder(
           ctx,
           placeholder,

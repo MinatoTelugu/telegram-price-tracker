@@ -438,7 +438,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
     const out = formatAlert(product, 19999, 22999, 15, kind, true);
     check('the ' + kind + ' alert carries no raw url', !/https?:\/\//.test(out));
     check('the ' + kind + ' alert still names the product', out.includes('Samsung Galaxy M17 5G Mobile'));
-    check('the ' + kind + ' alert still shows the price', out.includes('22999'));
+    check('the ' + kind + ' alert still shows the price', out.includes('22,999'));
   }
   check('the alert body has no 🔗 line left', !/🔗/.test(formatAlert(product, 1, 2, 5, 'rise', true)));
 
@@ -457,7 +457,9 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   // The alert is sent with that keyboard — which is what makes removing the body
   // link safe. If this ever stops being true, the link must come back.
   check('every alert send attaches the keyboard',
-    /sendTelegramMessage\(chatId, message, alertKeyboard\(doc\.id, data\)\)/.test(cron));
+    /sendTelegramMessage\(chatId, message, alertKeyboard\(doc\.id, data\), null, photo\)/.test(cron));
+  check('...and the product image, so the card goes out as a photo',
+    /const photo = data && data\.imageUrl/.test(cron));
   check('there is only one alert send site',
     (cron.match(/sendTelegramMessage\(/g) || []).length === 3); // def + retry + the alert
 }

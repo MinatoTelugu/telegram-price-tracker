@@ -250,6 +250,40 @@ check('the caller has a second, outer bound', /setTimeout\(\(\) => resolve\(null
   check('...and it only fires for the /s/ share path', /\^\\\/s\\\//.test(sl2));
 }
 
+// ---------------------------------------------------------------------------
+// THE ACTUAL BUG, found at last. "I could not open that short link" is not an
+// EXPANSION error — it is a CONVERTER error (CONVERT_ERRORS.shortlink_unresolved).
+// The link was being expanded and then failing at affiliate conversion, and the
+// caller refused the product because of it.
+//
+// Two causes:
+//   - the short-link fallback called convertWithProvider() (AFFILIATERS only),
+//     skipping Cuelinks, which is the PRIMARY network and the first link in the
+//     normal non-Amazon chain.
+//   - when that one provider failed, it returned a hard error and the caller
+//     replied with a refusal. A Flipkart share link is still a Flipkart link.
+// ---------------------------------------------------------------------------
+{
+  const af2 = fs.readFileSync(__dirname + '/lib/affiliate.js', 'utf8');
+  const tg2 = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+
+  check('the short-link fallback uses the full conversion chain',
+    /const viaChain = await convertNonAmazon\(raw\)/.test(af2));
+  check('...Cuelinks is reachable from that path', /convertNonAmazon\(raw\)/.test(af2));
+  check('...and the single-provider call is only a last resort',
+    af2.indexOf('convertNonAmazon(raw)') < af2.indexOf('convertWithProvider(raw).catch'));
+  check('an unresolvable share link is no longer a hard error',
+    !/return \{ ok: false, reason: 'shortlink_unresolved'/.test(af2));
+  check('...it comes back trackable instead', /tracking it as-is/.test(af2));
+
+  check('the caller salvages an unresolvable short link rather than refusing it',
+    /could not be resolved or converted — tracking the share url itself/.test(tg2));
+  check('...giving it a stable product id from the share code', /'share_' \+ m\[1\]/.test(tg2));
+  check('...and still refusing a genuinely unsupported store',
+    /CONVERT_ERRORS\[result.reason\]/.test(tg2));
+}
+
+
 // The behaviour, with a deliberately slow route rather than the network.
 const started = Date.now();
 Promise.race([

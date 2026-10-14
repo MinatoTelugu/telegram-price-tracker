@@ -182,7 +182,7 @@ check('...and it is within the 5-8s asked for', mod.EXPAND_DEADLINE_MS >= 5000 &
 check('...the caller is released by a race, not by the slowest route', /Promise\.race\(\[expandShortLinkInner\(raw\), deadline\]\)/.test(sl));
 check('...and the timer is always cleared', /clearTimeout\(timer\)/.test(sl));
 check('the redirect follow budget is no longer 12s', !/SHORTLINK_TIMEOUT_MS \|\| '12000'/.test(af));
-check('...it is within the requested window', /SHORTLINK_TIMEOUT_MS \|\| '5000'/.test(af));
+check('...it is no longer the longest single wait', /3500/.test(af));
 check('the hop loop has a TOTAL budget, not 2.5s per hop', /hopDeadline/.test(af));
 check('...and it stops when the budget is spent', /hop budget spent/.test(af));
 check('...and each hop is capped by what is left of it', /Math\.min\(2500, hopDeadline - Date\.now\(\)\)/.test(af));

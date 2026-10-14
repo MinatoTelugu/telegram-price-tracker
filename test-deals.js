@@ -264,26 +264,30 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
     'Nike Revolution Running Shoes',
     'Levis Mens Slim Fit Jeans',
     'Banarasi Silk Saree',
-    'Wildcraft Backpack 30L',
     'Pack of 3 Printed Men Trunk',
     'Mens Slim Fit Casual Shirt',
     'Womens High Rise Skinny Jeans',
     'Puma Unisex Sneakers',
     'Womens Dresses',
     'Mens Formal Shoes',
+    // Consumer tech is WANTED now, like mobiles before it. Earbuds moved from
+    // the SKIP list to POST for the same reason phones did.
+    'Boat Airdopes 141 Bluetooth Earbuds',
+    'JBL Flip 6 Bluetooth Speaker',
+    'ASUS TUF Gaming Laptop AMD Ryzen 7',
   ];
   const SKIP = [
     ['Maybelline Matte Lipstick Red', 'makeup'],
     ['Prestige Mixer Grinder 750W', 'appliance'],
     // Mobiles are WANTED now — the channel asked for phone deals, so this
     // moved from the SKIP list to the POST list above.
-    ['Boat Airdopes 141 Bluetooth Earbuds', 'earbuds'],
     ['Godrej 190L Refrigerator', 'appliance'],
     ['Milton Water Bottle 1L', 'bottle'],
     ['Wipro Garnet Smart Bulb', 'not fashion'],
     ['Classmate Notebook Pack', 'stationery'],
     ['Bournvita Health Drink', 'grocery'],
     ['Tata Salt 1kg', 'grocery'],
+    ['Wildcraft Backpack 30L', 'luggage'],
   ];
   for (const t of POST) {
     check('fashion: POST ' + t.slice(0, 34), deals.fashionCheck(t).ok === true, JSON.stringify(deals.fashionCheck(t)));
@@ -322,6 +326,45 @@ const check = (n, c) => { if (c) { pass++; console.log('  ✓', n); } else { fai
   const src = fs.readFileSync(__dirname + '/lib/deals.js', 'utf8');
   check('fashion cards\' lazy images are matched', /'img\[srcset\]'/.test(src) && /'img\[data-src\]'/.test(src));
   check('...and placeholders are still rejected', /if \(\/\^data:\/i\.test\(v\)\) continue;/.test(src));
+}
+
+// ---------------------------------------------------------------------------
+// From the live log: "fashion filter dropped 20 of 20 — e.g. Fire-Boltt Ninja
+// Blaze ... (not_fashion:smartwatch)". The bot was FETCHING a smartwatch listing
+// page (q=smartwatch is in the source list) and dropping every card on it, so it
+// paid for deals it had already decided to throw away and the channel saw
+// nothing.
+//
+// The cause was not the smartwatch word alone. One of those titles reads
+// "Built-in Games Smartwatch", and the blocklist holds 'game' — a single
+// incidental word rejecting a whole product. A title naming consumer tech IS a
+// tech deal, whatever else it mentions.
+// ---------------------------------------------------------------------------
+{
+  const d = require(__dirname + '/lib/deals.js');
+  const f = d.fashionCheck;
+  const ok = (t) => !!(f(t) || {}).ok;
+
+  check('a smartwatch is a deal', ok('TECHIO H9 PRO MAX SMART WATCH. Smartwatch'));
+  check('...even when the title mentions games',
+    ok('Fire-Boltt Ninja Blaze 1.83 HD Display Stainless Steel Built-in Games Smartwatch'));
+  check('earbuds are a deal', ok('boAt Airdopes 141 TWS Earbuds'));
+  check('a speaker is a deal', ok('JBL Flip 6 Bluetooth Speaker'));
+  check('a laptop is a deal', ok('ASUS TUF Gaming Laptop AMD Ryzen 7'));
+  check('...even a GAMING one, which the word "game" used to reject', ok('Gaming Mouse RGB'));
+  check('a monitor is a deal', ok('GEONIX 22-Inch FHD IPS 75Hz Monitor'));
+  check('a phone is still a deal', ok('Samsung Galaxy M17 5G Mobile'));
+
+  check('a curtain is still dropped', !ok('153 cm Window Polyester Curtain'));
+  check('a study table is still dropped', !ok('Callas ST-40 Wooden Study Table'));
+  check('nail polish is still dropped', !ok('Gloss Gel High Shine Nail Polish'));
+  check('a suitcase is still dropped', !ok('Safari Magnum Suitcase'));
+  check('a dress is still a deal', ok('Printed Georgette Stitched Flared Gown'));
+
+  const src = fs.readFileSync(__dirname + '/lib/deals.js', 'utf8');
+  check('tech is checked BEFORE the blocklist', src.indexOf('const tech = TECH.find') < src.indexOf('const blocked = NOT_FASHION.find'));
+  check('the blocklist no longer holds smartwatch', !/'smartwatch'/.test(src.split('const FASHION')[0]));
+  check('a tech allowlist exists', /const TECH = \[/.test(src));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -284,6 +284,43 @@ check('the caller has a second, outer bound', /setTimeout\(\(\) => resolve\(null
 }
 
 
+// ---------------------------------------------------------------------------
+// FLIPKART PRICE, second report. The bot showed Rs 3,159 for a phone whose page
+// reads:
+//     Top Discount of the Sale
+//     ↓45%   33,999   Rs 18,799
+//     Rs 200 off applied for you
+// Every anchor missed: the button says "Add to cart" (not "Buy now at"), Flipkart
+// prints no "Price:" label, and the struck figure is a BARE number with no
+// "M.R.P." — so the read fell through to "the first Rs in the buy area".
+//
+// What Flipkart always prints is the discount triple: percent, struck MRP, price.
+// ---------------------------------------------------------------------------
+{
+  const { priceFromTextMatch } = require(__dirname + '/lib/scraper.js');
+  const page = [
+    'Samsung Galaxy A35 5G (Awesome Iceblue, 128 GB) (8 GB RAM)',
+    'Top Discount of the Sale',
+    '\u219345% 33,999 \u20b918,799',
+    '\u20b9200 off applied for you',
+    '+\u20b9129 Protect Promise Fee',
+    'Add to cart Change Address',
+  ].join('\n');
+  const r = priceFromTextMatch(page);
+  check('the Flipkart discount triple gives the selling price', r && r.price === 18799, JSON.stringify(r));
+  check('...and it counts as a labelled read, not a guess', r && r.kind === 'labelled', r && r.kind);
+
+  const withButton = priceFromTextMatch(['Samsung Galaxy M17 5G', '\u219322% 24,500 \u20b919,130', 'Buy now at \u20b919,130'].join('\n'));
+  check('the buy button still wins when the page has one', withButton && withButton.price === 19130, JSON.stringify(withButton));
+
+  const cheap = priceFromTextMatch('Printed Georgette Gown \u219360% 999 \u20b9399');
+  check('a cheap fashion deal is still read correctly', cheap && cheap.price === 399, JSON.stringify(cheap));
+
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the percent is not the captured group', /const discountTriple =\s*\n?\s*\/\(\?:\u2193/.test(scr) || /discountTriple/.test(scr));
+  check('...and no blunt "under Rs 1000 is wrong" rule was added', !/price < 1000\) return true/.test(scr));
+}
+
 // The behaviour, with a deliberately slow route rather than the network.
 const started = Date.now();
 Promise.race([

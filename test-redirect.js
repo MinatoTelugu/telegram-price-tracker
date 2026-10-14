@@ -218,6 +218,38 @@ check('the caller has a second, outer bound', /setTimeout\(\(\) => resolve\(null
   check('...and its answer is validated as a store URL', /acceptExpansion\(page\.resolvedUrl\)/.test(sl));
 }
 
+// ---------------------------------------------------------------------------
+// FLIPKART PRICE. Reported: the alert said ₹18,566 for a phone the page shows at
+// ₹19,130. The page carries BOTH "Buy now at ₹19,130" (the selling price) and
+// "Buy at ₹17,075" (the EMI / WOW DEAL card), plus exchange and bank offers.
+// ---------------------------------------------------------------------------
+{
+  const { priceFromTextMatch } = require(__dirname + '/lib/scraper.js');
+  const page = [
+    'Samsung Galaxy M17 5G (Moonlight Silver, 128 GB) (4 GB RAM)',
+    '\u219322% 24,500 \u20b919,130',
+    '+\u20b9129 Protect Promise Fee',
+    'WOW DEAL Buy at \u20b917,075 EMI @ \u20b95,692 x 3m',
+    'Exchange offer Not available at this Pincode Up to \u20b914,950',
+    'Bank offers Best value for you \u20b91,432 off',
+    'Buy with EMI From \u20b96,547/m Buy now at \u20b919,130',
+  ].join('\n');
+  const r = priceFromTextMatch(page);
+  check('the Flipkart selling price is read, not the EMI offer', r && r.price === 19130, JSON.stringify(r));
+  check('...and it is treated as a labelled read, not a guess', r && r.kind === 'labelled', r && r.kind);
+  const r2 = priceFromTextMatch('Current price: \u20b919,130 M.R.P.: \u20b924,500');
+  check('a labelled price still reads as labelled', r2 && r2.price === 19130 && r2.kind === 'labelled');
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the current Flipkart price class is listed', /div\.nx3p3z/.test(scr));
+  check('the buy button is read BEFORE the offer blocks are stripped',
+    scr.indexOf('const buyButton =') < scr.indexOf('Strip the offer blocks'));
+  check('"Buy at" (the EMI card) is stripped', /buy\\s\+at\\s\*\(\?:/.test(scr));
+
+  const sl2 = fs.readFileSync(__dirname + '/lib/shortlink.js', 'utf8');
+  check('the main-host route exists for dl.flipkart.com share links', /expanded via the main host/.test(sl2));
+  check('...and it only fires for the /s/ share path', /\^\\\/s\\\//.test(sl2));
+}
+
 // The behaviour, with a deliberately slow route rather than the network.
 const started = Date.now();
 Promise.race([

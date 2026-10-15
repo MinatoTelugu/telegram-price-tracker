@@ -271,5 +271,49 @@ console.log('');
 }
 
 
+// ---------------------------------------------------------------------------
+// THE REPORTED A35 PAGE. "Out of stock" appears TWICE on it — once on an
+// unavailable colour swatch, once on the 256 GB variant — while the SELECTED
+// variant is in stock, shows "1 left", and the page offers "Add to cart".
+// The bot marked it out of stock.
+//
+// The old order asked "does any text say out of stock?" BEFORE "is there a buy
+// button?". The variant rows are meant to be stripped first, but Flipkart hashes
+// its class names, so the variant selector misses them — and a variant's label
+// won. A purchase button is not a label a sibling variant can borrow.
+// ---------------------------------------------------------------------------
+{
+  const { detectOutOfStock } = scraper;
+  const load = (h) => cheerio.load(h);
+
+  check('the reported A35 page is IN stock, despite two "Out of stock" labels',
+    detectOutOfStock(load(`<div id="container">
+      <div>Selected Color: Awesome Iceblue</div>
+      <div>Out of stock</div>
+      <div>Variant: 128 GB + 8 GB</div>
+      <div>256 GB + 8 GB Out of stock</div>
+      <div>\u219345% 33,999 \u20b918,799 1 left</div>
+      <button>Add to cart</button><button>Change Address</button>
+    </div>`)) === false);
+
+  check('...because a purchase button beats any label',
+    /AN ACTION BEATS A LABEL/.test(fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8')));
+  check('...and the button check comes FIRST',
+    (function () {
+      const src = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+      return src.indexOf('const hasBuyAction') < src.indexOf('const buyboxSaysOut');
+    })());
+
+  check('a genuinely unavailable listing is still OUT',
+    detectOutOfStock(load(`<div id="container"><div>Out of stock</div><div>This item is currently unavailable</div></div>`)) === true);
+  check('Notify Me with no purchase button is still OUT',
+    detectOutOfStock(load(`<div id="container"><div>Out of stock</div><button>Notify Me</button></div>`)) === true);
+  check('Amazon is unaffected: in stock',
+    detectOutOfStock(load(`<div id="availability"><span>In stock</span></div>`)) === false);
+  check('Amazon is unaffected: unavailable',
+    detectOutOfStock(load(`<div id="availability">Currently unavailable.</div>`)) === true);
+}
+
+
 console.log(passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

@@ -879,6 +879,34 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
 }
 
 
+// ---------------------------------------------------------------------------
+// AUDIT. Three things found by reading the live repo rather than waiting for a
+// report.
+// ---------------------------------------------------------------------------
+{
+  const search = fs.readFileSync(__dirname + '/lib/search.js', 'utf8');
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+
+  // A live log carried: scrape: last-resort data used — title="1-24 of 136
+  // results". That is Amazon's results-page heading, stored and shown as the
+  // product's name. The store-name guard did not cover it.
+  check('a results-page heading is not accepted as a product name',
+    /\^\\d\+\\s\*\[-\\u2013\]\\s\*\\d\+\\s\+of\\s\+/.test(search) ||
+    /results\?\\b/i.test(search));
+  check('...nor "N of over M results"', /of\\s\+\(\?:over\\s\+\)\?/.test(search));
+  check('...nor "Results for ..."', /results\?\\s\+for/.test(search));
+
+  // "This product" reads as a placeholder someone forgot to remove.
+  check('the placeholder name is gone', !/return 'This product';/.test(tg));
+  check('...replaced by something honest', /Finding the product name/.test(tg));
+
+  // Variables the code reads that .env.example never mentioned.
+  const env = fs.readFileSync(__dirname + '/.env.example', 'utf8');
+  for (const v of ['CHANNEL_LINK', 'DEALS_CRON', 'CONVERTER_TIMEOUT_MS', 'RATE_LIMIT_PER_MINUTE']) {
+    check('.env.example documents ' + v, env.includes(v));
+  }
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

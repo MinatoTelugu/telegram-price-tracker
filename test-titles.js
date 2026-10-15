@@ -210,9 +210,9 @@ check('isPlaceholderTitle rejects an error page too',
 
 // The card must not reprint a bad title that is ALREADY stored on a doc.
 check('displayTitle never shows an error page',
-  displayTitle('503 - Service Unavailable Error', 'B0G81TPT89') === 'This product');
+  displayTitle('503 - Service Unavailable Error', 'B0G81TPT89') === 'Finding the product name\u2026');
 check('displayTitle falls back rather than showing an ASIN',
-  displayTitle('B0G81TPT89', 'B0G81TPT89') === 'This product');
+  displayTitle('B0G81TPT89', 'B0G81TPT89') === 'Finding the product name\u2026');
 const marketingBlob =
   'Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage) | 50MP OIS Triple Camera | ' +
   'Super AMOLED Display | Gorilla Glass Victus | 6 Gen OS Upgrades | MONSTER CAMERA - Turn moments into monster stories';
@@ -266,7 +266,7 @@ check('cleanProductName keeps an Amazon-branded product name',
 // --- a short-link slug must never become the name ----------------------------
 check('a short-link slug is rejected as a title', isPlaceholderTitle('016NErcW', 'B0G81TPT89') === true);
 check('...and displayTitle falls back rather than showing it',
-  displayTitle('016NErcW', 'B0G81TPT89') === 'This product');
+  displayTitle('016NErcW', 'B0G81TPT89') === 'Finding the product name\u2026');
 check('a real single-word name is still accepted',
   isPlaceholderTitle('Airdopes', 'B0G81TPT89') === false);
 
@@ -304,7 +304,7 @@ check('a feature-bullet mashup is NOT a usable title',
 check('a marketing line is NOT a usable title',
   isUsableTitle('Monster Camera Turn Moments Into Stories', 'B0G81TPT89') === false);
 check('...and displayTitle does not show it',
-  displayTitle('IQOO Prismatic Dimensity Processor OriginOS', 'B0G81TPT89') === 'This product');
+  displayTitle('IQOO Prismatic Dimensity Processor OriginOS', 'B0G81TPT89') === 'Finding the product name\u2026');
 
 // ...while a real name without a model number still is.
 check('a real name without a digit is still usable',

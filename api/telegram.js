@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-150 (2026-10-15)';
+const BUILD = 'names-151 (2026-10-15)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -1282,7 +1282,11 @@ function displayTitle(title, productId) {
   for (const candidate of [cleaned, raw]) {
     if (isUsableTitle(candidate, productId)) return candidate;
   }
-  return 'This product';
+  // NOT "This product". That reads as a placeholder someone forgot to remove.
+  // If we genuinely have no name, say what IS true: we are still finding it.
+  // A card labelled "Finding the product name…" is honest and self-correcting;
+  // one labelled "This product" looks broken.
+  return 'Finding the product name…';
 }
 
 /**

@@ -110,7 +110,7 @@ check('...and Prev/Next only appear where they lead somewhere',
 // ---------------------------------------------------------------------------
 // NAVIGATION CONTROLS. The paging row plus a way home.
 // ---------------------------------------------------------------------------
-check('Previous is spelled out', /'⬅️ Previous'/.test(src));
+check('Previous is labelled exactly as the user asked', /'⬅️ Prev'/.test(src));
 check('Next is spelled out', /'Next ➡️'/.test(src));
 check('the indicator sits between them', /' \/ ' \+ pages, 'listpage:' \+ current/.test(src));
 check('Home is a button', /Markup\.button\.callback\('🏠 Home', 'home'\)/.test(src));
@@ -160,6 +160,36 @@ check('the list logs the page, the item count and the button count',
 check('...and whether a keyboard was attached', /keyboard=' \+ \(opts\.reply_markup \? 'yes' : 'NO'\)/.test(src));
 check('...which is the line that settles a "no buttons" report',
   /keyboard=NO/.test(src) || /'yes' : 'NO'/.test(src));
+
+// ---------------------------------------------------------------------------
+// THE BUG THAT MADE THE BUTTONS INVISIBLE.
+//
+// Markup.inlineKeyboard(rows) returns { reply_markup: { inline_keyboard } } —
+// NOT { inline_keyboard }. Assigning it to opts.reply_markup produced
+// reply_markup.reply_markup.inline_keyboard, a shape Telegram does not
+// recognise, so it dropped the keyboard SILENTLY and /list arrived with no
+// buttons at all.
+//
+// The tell was in plain sight: the welcome menu's buttons worked, and they used
+// the SAME helper — but they SPREAD it (...keyboard) instead of assigning it.
+// ---------------------------------------------------------------------------
+check('the list keyboard is assigned the INNER reply_markup, not the wrapper',
+  /opts\.reply_markup = Markup\.inlineKeyboard\(buttonRows\)\.reply_markup;/.test(src));
+check('...and no call assigns the wrapper directly',
+  !/reply_markup = Markup\.inlineKeyboard\([^;]*\);\s*$/m.test(src.replace(/\.reply_markup;/g, '.X;')));
+check('the history keyboard is fixed the same way',
+  /Markup\.inlineKeyboard\(\[[\s\S]{0,200}?\]\)\.reply_markup;/.test(src));
+
+// The shape itself, so the reason is recorded rather than just the fix.
+{
+  const { Markup } = require('telegraf');
+  const kb = Markup.inlineKeyboard([[Markup.button.callback('A', 'a')]]);
+  check('Markup.inlineKeyboard wraps its result', Object.keys(kb).join() === 'reply_markup');
+  check('...so assigning it would nest twice',
+    Object.keys(Object.assign({}, { reply_markup: kb }).reply_markup).join() === 'reply_markup');
+  check('...and spreading it gives the shape Telegram wants',
+    Object.keys(Object.assign({}, kb).reply_markup).join() === 'inline_keyboard');
+}
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

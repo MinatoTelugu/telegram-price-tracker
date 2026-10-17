@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-161 (2026-10-17)';
+const BUILD = 'names-162 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -547,7 +547,7 @@ async function sendTrackingList(ctx, page, mode) {
     // Prev / page-indicator / Next, only when there is more than one page.
     if (pages > 1) {
       const nav = [];
-      if (current > 0) nav.push(Markup.button.callback('⬅️ Previous', 'listpage:' + (current - 1)));
+      if (current > 0) nav.push(Markup.button.callback('⬅️ Prev', 'listpage:' + (current - 1)));
       nav.push(Markup.button.callback((current + 1) + ' / ' + pages, 'listpage:' + current));
       if (current < pages - 1) nav.push(Markup.button.callback('Next ➡️', 'listpage:' + (current + 1)));
       buttonRows.push(nav);
@@ -562,7 +562,16 @@ async function sendTrackingList(ctx, page, mode) {
     // /list 2 still works silently for anyone who types it.
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
-    if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
+    // SPREAD, do not assign.
+    //
+    // Markup.inlineKeyboard(rows) returns { reply_markup: { inline_keyboard } },
+    // NOT { inline_keyboard }. Assigning it to opts.reply_markup produced
+    // reply_markup.reply_markup.inline_keyboard — a shape Telegram does not
+    // recognise, so it dropped the keyboard silently and the list arrived with no
+    // buttons at all. The welcome menu always worked because it SPREADS the same
+    // object, which is the tell: one worked, one did not, and they used the same
+    // helper.
+    if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows).reply_markup;
     const text = lines.join('\n');
     LIST_CACHE.set(uid + ':' + current, { text, opts, at: Date.now() });
 
@@ -2087,7 +2096,7 @@ function registerHandlers(bot) {
       if (base) {
         opts.reply_markup = Markup.inlineKeyboard([
           [Markup.button.url('🌐 View Full Chart on Web', base + '/?id=' + encodeURIComponent(docId))],
-        ]);
+        ]).reply_markup;
       }
       await ctx.reply(lines.join('\n'), opts);
     } catch (err) {

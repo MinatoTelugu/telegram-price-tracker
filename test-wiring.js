@@ -768,7 +768,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('sendTrackingList no longer fails silently',
     (() => {
       const start = tg.indexOf('async function sendTrackingList');
-      const body = tg.slice(start, start + 12000);
+      const body = tg.slice(start, start + 20000);
       return /sendTrackingList failed/.test(body) && /ctx\.reply\(/.test(body.slice(body.indexOf('sendTrackingList failed')));
     })());
   check('...and even a failed reply is logged, not swallowed',

@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-153 (2026-10-17)';
+const BUILD = 'names-154 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -351,7 +351,7 @@ async function sendTrackingList(ctx, page) {
     const uid = String(ctx.from.id);
 
     // A recent copy costs nothing and cannot be refused.
-    const cacheKey = uid + ':' + (page || 0);
+    const cacheKey = uid + ':' + (typeof page === 'number' && Number.isFinite(page) ? page : 0);
     const cached = LIST_CACHE.get(cacheKey);
     if (cached && Date.now() - cached.at < LIST_CACHE_MINUTES * 60 * 1000) {
       await ctx.reply(cached.text, cached.opts);
@@ -440,7 +440,12 @@ async function sendTrackingList(ctx, page) {
 
     const total = items.length;
     const pages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
-    const current = Math.min(Math.max(0, page || 0), pages - 1);
+    // `page` is ONLY a number when we call this ourselves from the paging
+    // callback. As a Telegraf command handler the second argument is `next`, a
+    // function — and Math.max(0, function) is NaN, which is how the heading read
+    // "page NaN/5" on a real screenshot. Anything that is not a number is page 0.
+    const requested = typeof page === 'number' && Number.isFinite(page) ? page : 0;
+    const current = Math.min(Math.max(0, requested), pages - 1);
     const start = current * LIST_PAGE_SIZE;
     const pageItems = items.slice(start, start + LIST_PAGE_SIZE);
 
@@ -548,7 +553,7 @@ async function sendTrackingList(ctx, page) {
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
     const text = lines.join('\n');
-    LIST_CACHE.set(uid + ':' + (page || 0), { text, opts, at: Date.now() });
+    LIST_CACHE.set(uid + ':' + current, { text, opts, at: Date.now() });
     await ctx.reply(text, opts);
   } catch (err) {
     quotaGuard.noteError(err);
@@ -560,7 +565,7 @@ async function sendTrackingList(ctx, page) {
     // trace was a stack trace in the Koyeb log. A command that fails silently is
     // indistinguishable from a bot that is down.
     try {
-      const stale = ctx.from && LIST_CACHE.get(String(ctx.from.id) + ':' + (page || 0));
+      const stale = ctx.from && LIST_CACHE.get(String(ctx.from.id) + ':' + (typeof page === 'number' && Number.isFinite(page) ? page : 0));
       if (stale) {
         // The database is refusing us, but we already know what this list looked
         // like. Show it, and say plainly that it is the last known copy rather

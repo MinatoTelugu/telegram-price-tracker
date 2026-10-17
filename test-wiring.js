@@ -955,7 +955,14 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...tolerating Telegram refusing an unchanged edit',
     /message is not modified/i.test(tg));
   check('the page is part of the cache key, so pages do not overwrite each other',
-    /uid \+ ':' \+ \(page \|\| 0\)/.test(tg));
+    /uid \+ ':' \+ current/.test(tg));
+  // A REAL BUG, caught by a screenshot: the heading read "page NaN/5".
+  // Telegraf calls a command handler as (ctx, next), so passing sendTrackingList
+  // directly meant the second argument was `next` — a FUNCTION — and
+  // Math.max(0, function) is NaN.
+  check('a non-numeric page is treated as page 0, not NaN',
+    /typeof page === 'number' && Number\.isFinite\(page\) \? page : 0/.test(tg));
+  check('...so the heading can never say NaN', !/page ' \+ \(current \+ 1\)/.test(tg) || /const current = Math\.min\(Math\.max\(0, requested\)/.test(tg));
   check('the query is still bounded', /\.limit\(30\)/.test(tg));
 }
 

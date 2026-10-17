@@ -1,41 +1,68 @@
 /**
- * test-reader.js — the reader-service fallback.
+ * test-reader.js
+ * ---------------------------------------------------------------------------
+ * The reader services, and the HTML stripping the generic ones need.
  *
- * Amazon refuses this host, so a reader service (which fetches from its own
- * servers) is the route that can actually see a product page. Its reply begins
- * with a "Title:" line, which is the product name we want.
+ * Reported: a Flipkart product showed "—" for every price, STOCK UNKNOWN,
+ * "Updated: not yet checked" and PRICE READINGS: 0. That is not a rendering
+ * fault — no price was ever fetched. For Flipkart there is no hosted API, so the
+ * reader is the ONLY route that can reach a page the store refuses us directly,
+ * and it was a single service answering "empty body".
+ * ---------------------------------------------------------------------------
  */
-const Module = require('module');
-let pass = 0, fail = 0;
-const check = (n, ok) => { if (ok) pass++; else { fail++; console.log('  ✗ FAIL: ' + n); } };
-
-let reply = '';
-const origLoad = Module._load;
-Module._load = function (request) {
-  if (request === 'axios') {
-    return { get: async () => ({ status: 200, data: reply }), post: async () => ({ data: {} }) };
-  }
-  return origLoad.apply(this, arguments);
-};
+const fs = require('fs');
+const path = require('path');
 const reader = require('./lib/reader.js');
-Module._load = origLoad;
 
-(async () => {
-  reply = 'Title: Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage)\n\nURL Source: https://www.amazon.in/dp/B0G81TPT89\n\nMarkdown Content:\nPrice: ₹18,999\n';
-  const page = await reader.fetchReadablePage('https://www.amazon.in/dp/B0G81TPT89');
-  check('the reader returns a page', Boolean(page));
-  check('the Title: line becomes the name',
-    page.title === 'Samsung Galaxy M17 5G Mobile (Moonlight Silver, 6GB RAM, 128GB Storage)');
-  check('the body text is returned for price extraction', /₹18,999/.test(page.text));
+let pass = 0, fail = 0;
+function check(name, ok, extra) {
+  if (ok) { pass++; console.log('  ok   ' + name); }
+  else { fail++; console.log('  FAIL ' + name + (extra ? '  -> ' + extra : '')); }
+}
 
-  reply = 'Title: https://www.amazon.in/dp/B0G81TPT89\n\n# Samsung Galaxy M17 5G\n\nsome text here that is long enough to pass the length guard';
-  const p2 = await reader.fetchReadablePage('https://www.amazon.in/dp/B0G81TPT89');
-  check('a URL echoed as the title is rejected', p2.title === 'Samsung Galaxy M17 5G');
+const src = fs.readFileSync(path.join(__dirname, 'lib/reader.js'), 'utf8');
+const svcs = reader.readerServices();
 
-  reply = '';
-  const p3 = await reader.fetchReadablePage('https://x.example');
-  check('an empty reply yields null', p3 === null);
+check('more than one reader service exists', svcs.length >= 2, 'got ' + svcs.length);
+check('...Jina is still first', svcs[0].name === 'jina');
+check('...and there is a keyless proxy behind it', svcs.some((s) => s.name !== 'jina'));
+check('...all of them are free endpoints, no keys',
+  svcs.every((s) => /^https:\/\//.test(s.url('https://example.com')) && !/key=|token=|api_key/i.test(s.url('https://example.com'))));
+check('a custom READER_API_URL pins a single service',
+  (function () {
+    const before = process.env.READER_API_URL;
+    process.env.READER_API_URL = 'https://my.reader/';
+    const one = reader.readerServices();
+    if (before === undefined) delete process.env.READER_API_URL; else process.env.READER_API_URL = before;
+    return one.length === 1 && one[0].name === 'custom';
+  })());
+check('the loop walks every service, not just the first',
+  /for \(const svc of services\)/.test(src));
+check('...and does not give up after one empty body',
+  /svc\.name !== 'jina'\) console\.log\('reader: text came from/.test(src));
 
-  console.log(`\n${pass} passed, ${fail} failed`);
-  process.exit(fail ? 1 : 0);
-})();
+// The HTML stripping, which the generic proxies require.
+const html = [
+  '<html><head><style>.x{color:red}</style>',
+  '<script>var price=999999;</script></head>',
+  '<body><div>Samsung Galaxy M17 5G</div>',
+  '<div><span>\u20b919,130</span></div>',
+  '<div>M.R.P.: \u20b924,500</div></body></html>',
+].join('');
+const text = reader.htmlToText(html);
+check('script contents are removed', !text.includes('999999'));
+check('style contents are removed', !text.includes('color:red'));
+check('the visible text survives', text.includes('Samsung Galaxy M17 5G'));
+check('the rupee figure survives', text.includes('19,130'));
+check('...and the price parser can read it',
+  (function () {
+    const { priceFromTextMatch } = require('./lib/scraper.js');
+    const m = priceFromTextMatch(text);
+    return m && m.price === 19130;
+  })());
+check('entities are decoded', reader.htmlToText('<div>&#8377;99 &amp; up</div>').includes('\u20b9'));
+check('block elements become newlines, so clauses split',
+  reader.htmlToText('<div>a</div><div>b</div>').split('\n').length >= 2);
+
+console.log('\n' + pass + ' passed, ' + fail + ' failed');
+process.exit(fail ? 1 : 0);

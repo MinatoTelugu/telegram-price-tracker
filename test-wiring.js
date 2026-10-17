@@ -942,7 +942,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
   check('the page size is configurable', /LIST_PAGE_SIZE/.test(tg));
   check('...defaulting to five', /LIST_PAGE_SIZE \|\| '5'/.test(tg));
-  check('/list takes a page argument', /async function sendTrackingList\(ctx, page\)/.test(tg));
+  check('/list takes a page argument and a mode', /async function sendTrackingList\(ctx, page, mode\)/.test(tg));
   check('...and slices the items to it', /items\.slice\(start, start \+ LIST_PAGE_SIZE\)/.test(tg));
   check('...numbering from the page offset, so "Stop 3" matches what is shown',
     /let index = start;/.test(tg));
@@ -952,6 +952,7 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('...the buttons carry a page number', /'listpage:' \+ \(current \+ 1\)/.test(tg));
   check('...and the callback EDITS rather than sending a new message',
     /await ctx\.editMessageText\(text, opts\)/.test(tg));
+  check('...with no faked context', !/Object\.create\(ctx\)\s*;/.test(tg));
   check('...tolerating Telegram refusing an unchanged edit',
     /message is not modified/i.test(tg));
   check('the page is part of the cache key, so pages do not overwrite each other',

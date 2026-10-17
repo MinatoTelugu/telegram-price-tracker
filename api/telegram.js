@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-155 (2026-10-17)';
+const BUILD = 'names-156 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -341,7 +341,7 @@ const LIST_CACHE_MINUTES = Math.max(1, parseInt(process.env.LIST_CACHE_MINUTES |
  */
 const LIST_PAGE_SIZE = Math.max(1, parseInt(process.env.LIST_PAGE_SIZE || '5', 10));
 
-async function sendTrackingList(ctx, page) {
+async function sendTrackingList(ctx, page, mode) {
   try {
     if (!ctx.from) return;
     if (!db) {
@@ -557,7 +557,25 @@ async function sendTrackingList(ctx, page) {
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
     const text = lines.join('\n');
     LIST_CACHE.set(uid + ':' + current, { text, opts, at: Date.now() });
-    await ctx.reply(text, opts);
+
+    // EDIT when we were called from a paging button, REPLY otherwise.
+    //
+    // This used to fake a context with Object.create(ctx) and override .reply.
+    // Telegraf's context carries its properties through getters and its own
+    // middleware state, and a prototype-shimmed copy is not the same object — so
+    // the paging buttons did nothing when pressed. An explicit mode says what we
+    // mean without pretending to be something we are not.
+    if (mode === 'edit') {
+      try {
+        await ctx.editMessageText(text, opts);
+      } catch (err) {
+        // Telegram refuses an edit that changes nothing. That is not a failure —
+        // pressing the page button you are already on should be harmless.
+        if (!/message is not modified/i.test(err.message)) throw err;
+      }
+    } else {
+      await ctx.reply(text, opts);
+    }
   } catch (err) {
     quotaGuard.noteError(err);
     console.error('sendTrackingList failed', err);
@@ -2614,23 +2632,19 @@ function registerHandlers(bot) {
   // Page navigation. Re-renders the same list at another offset and EDITS the
   // message, so paging never litters the chat with copies of the list.
   bot.action(/^listpage:(\d+)$/, async (ctx) => {
+    // Answer FIRST, always. Telegram drops a callback button's spinner after ~15
+    // seconds and the user is left thinking the button is dead, so the
+    // acknowledgement must not wait on the database read behind it.
+    ctx.answerCbQuery().catch(() => {});
     try {
-      await ctx.answerCbQuery().catch(() => {});
       const page = parseInt(ctx.match[1], 10) || 0;
-      // Re-render into a throwaway context that edits instead of replying.
-      const editing = Object.create(ctx);
-      editing.reply = async (text, opts) => {
-        try {
-          await ctx.editMessageText(text, opts);
-        } catch (err) {
-          // Telegram refuses an edit that changes nothing — not an error.
-          if (!/message is not modified/i.test(err.message)) throw err;
-        }
-      };
-      await sendTrackingList(editing, page);
+      await sendTrackingList(ctx, page, 'edit');
     } catch (err) {
       console.error('list page failed:', err.message);
-      await ctx.answerCbQuery('Could not load that page.').catch(() => {});
+      // The edit failed, so say so rather than leaving the user on a stale page.
+      await ctx
+        .answerCbQuery('Could not load that page — try /list again.')
+        .catch(() => {});
     }
   });
 

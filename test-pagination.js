@@ -86,5 +86,26 @@ check('a single page has neither', nav(5, next).prev === false && nav(5, next).n
 check('labels read 1/5 ... 5/5',
   ['1/5', '2/5', '3/5', '4/5', '5/5'].every((l, i) => nav(21, i).label === l));
 
+// ---------------------------------------------------------------------------
+// THE PAGING BUTTONS. A screen recording showed them doing nothing when pressed.
+//
+// The callback faked a Telegraf context with Object.create(ctx) and overrode
+// .reply. Telegraf carries its context properties through getters and its own
+// middleware state, so a prototype-shimmed copy is not the same object and the
+// edit never reached Telegram. There is now an explicit mode instead.
+// ---------------------------------------------------------------------------
+check('the callback does not fake a context', !/Object\.create\(ctx\)\s*;/.test(src));
+check('...it passes an explicit edit mode', /sendTrackingList\(ctx, page, 'edit'\)/.test(src));
+check('...and the function honours it', /if \(mode === 'edit'\) \{/.test(src));
+check('...editing the existing message', /await ctx\.editMessageText\(text, opts\)/.test(src));
+check('...and replying when it is not an edit', /\} else \{\s*\n\s*await ctx\.reply\(text, opts\)/.test(src));
+check('an unchanged edit is tolerated, not treated as an error',
+  /message is not modified/i.test(src));
+check('the callback is acknowledged BEFORE the database read',
+  src.indexOf('ctx.answerCbQuery().catch(() => {});') < src.indexOf("sendTrackingList(ctx, page, 'edit')"));
+check('the page buttons carry a page number', /'listpage:' \+ \(current \+ 1\)/.test(src));
+check('...and Prev/Next only appear where they lead somewhere',
+  /if \(current > 0\) nav\.push/.test(src) && /if \(current < pages - 1\) nav\.push/.test(src));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

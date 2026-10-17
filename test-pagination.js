@@ -137,8 +137,10 @@ check('...read from the message, not from the second argument',
   /ctx\.message && ctx\.message\.text/.test(src));
 check('...so /list 2 means page 2', /parseInt\(m\[1\], 10\) - 1/.test(src));
 check('...and a group-chat mention is tolerated', /@\\w\+/.test(src));
-check('the message tells the user they can type it', /\/list 2<\/code>/.test(src));
-check('...but only when there is more than one page', /if \(pages > 1\) \{\s*\n\s*lines\.push\(\s*''\);\s*\n\s*lines\.push\('<i>Tap the buttons/.test(src));
+check('no typed hint clutters the list — the buttons are the way to page',
+  !/Tap the buttons, or type/.test(src));
+check('...but /list N still works silently for anyone who types it',
+  /parseInt\(m\[1\], 10\) - 1/.test(src));
 
 // The parse itself, exercised.
 const parsePage = (msg) => {

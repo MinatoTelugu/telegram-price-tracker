@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-159 (2026-10-17)';
+const BUILD = 'names-160 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -557,14 +557,9 @@ async function sendTrackingList(ctx, page, mode) {
     // no way out is exactly the trap this replaces.
     buttonRows.push([Markup.button.callback('🏠 Home', 'home')]);
 
-    // Say the pages out loud. Buttons are the normal way to move, but if the
-    // keyboard does not reach the user — an old message scrolled past, a client
-    // that hides keyboards — typing the page must still be discoverable rather
-    // than something they have to guess.
-    if (pages > 1) {
-      lines.push('');
-      lines.push('<i>Tap the buttons, or type</i> <code>/list 2</code> <i>to jump to a page.</i>');
-    }
+    // No typed hint. The buttons ARE the way to page; a line of instructions under
+    // a list is clutter, and the user asked for buttons rather than a command.
+    // /list 2 still works silently for anyone who types it.
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);

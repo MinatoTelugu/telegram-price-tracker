@@ -107,5 +107,24 @@ check('the page buttons carry a page number', /'listpage:' \+ \(current \+ 1\)/.
 check('...and Prev/Next only appear where they lead somewhere',
   /if \(current > 0\) nav\.push/.test(src) && /if \(current < pages - 1\) nav\.push/.test(src));
 
+// ---------------------------------------------------------------------------
+// NAVIGATION CONTROLS. The paging row plus a way home.
+// ---------------------------------------------------------------------------
+check('Previous is spelled out', /'⬅️ Previous'/.test(src));
+check('Next is spelled out', /'Next ➡️'/.test(src));
+check('the indicator sits between them', /' \/ ' \+ pages, 'listpage:' \+ current/.test(src));
+check('Home is a button', /Markup\.button\.callback\('🏠 Home', 'home'\)/.test(src));
+check('...on its own row, so it is always reachable',
+  /buttonRows\.push\(\[Markup\.button\.callback\('🏠 Home', 'home'\)\]\)/.test(src));
+check('...and it is OUTSIDE the pages>1 block, so a single page has it too',
+  src.indexOf("'🏠 Home', 'home'") > src.indexOf('if (pages > 1) {'));
+check('Home has a handler', /bot\.action\(\/\^home/.test(src));
+check('...which edits rather than piling up messages', /await ctx\.editMessageText\(caption, opts\)/.test(src));
+check('...and falls back to a reply when the message cannot be edited',
+  /await ctx\.reply\(caption, opts\)\.catch/.test(src));
+check('the main menu is defined once, so /start and Home cannot drift',
+  (src.match(/function mainMenu\(\)/g) || []).length === 1);
+check('...and /start uses it', /const \{ caption, keyboard \} = mainMenu\(\)/.test(src));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

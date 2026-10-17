@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-156 (2026-10-17)';
+const BUILD = 'names-157 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -547,11 +547,15 @@ async function sendTrackingList(ctx, page, mode) {
     // Prev / page-indicator / Next, only when there is more than one page.
     if (pages > 1) {
       const nav = [];
-      if (current > 0) nav.push(Markup.button.callback('⬅️ Prev', 'listpage:' + (current - 1)));
+      if (current > 0) nav.push(Markup.button.callback('⬅️ Previous', 'listpage:' + (current - 1)));
       nav.push(Markup.button.callback((current + 1) + ' / ' + pages, 'listpage:' + current));
       if (current < pages - 1) nav.push(Markup.button.callback('Next ➡️', 'listpage:' + (current + 1)));
       buttonRows.push(nav);
     }
+    // Home on its own row, on EVERY list — including a single page. The way back
+    // should not depend on how many products you track, and a one-page list with
+    // no way out is exactly the trap this replaces.
+    buttonRows.push([Markup.button.callback('🏠 Home', 'home')]);
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
@@ -1547,7 +1551,13 @@ function registerHandlers(bot) {
     return next();
   });
 
-  bot.start(async (ctx) => {
+  /**
+   * The main menu, defined once.
+   *
+   * /start and the Home button must show the same thing; two copies of a caption
+   * and a keyboard is how one of them ends up stale after an edit to the other.
+   */
+  function mainMenu() {
     const caption =
       '🎉 Great to see you! Welcome!\n\n' +
       '=> I am the Ai Price Alert Bot. I can track product prices and send you instant alerts.\n\n' +
@@ -1555,10 +1565,35 @@ function registerHandlers(bot) {
       '=> Supported URLs: [ Amazon, Flipkart ]\n\n' +
       'Save Time! Save Money!!\n\n' +
       'Click /help to get more help.';
-    const keyboard = Markup.inlineKeyboard([
-      [Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)],
-      [Markup.button.callback('📋 My List', 'mylist')],
-    ]);
+    return {
+      caption,
+      keyboard: Markup.inlineKeyboard([
+        [Markup.button.url("🛍️ Today's Deals", CHANNEL_URL)],
+        [Markup.button.callback('📋 My List', 'mylist')],
+      ]),
+    };
+  }
+
+  // Home: return to the main menu from anywhere. EDITS when it was a button
+  // press on a list message (so the chat does not fill up), replies otherwise.
+  bot.action(/^home(:edit)?$/, async (ctx) => {
+    ctx.answerCbQuery().catch(() => {});
+    const { caption, keyboard } = mainMenu();
+    const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...keyboard };
+    try {
+      await ctx.editMessageText(caption, opts);
+    } catch (err) {
+      // Not every message can be edited — a photo caption cannot become text,
+      // and Telegram refuses an unchanged edit. A fresh reply is the right
+      // fallback in both cases rather than leaving the press unanswered.
+      if (!/message is not modified/i.test(err.message)) {
+        await ctx.reply(caption, opts).catch(() => {});
+      }
+    }
+  });
+
+  bot.start(async (ctx) => {
+    const { caption, keyboard } = mainMenu();
 
     // Reply FIRST so the welcome is instant; the DB write happens after it.
     try {

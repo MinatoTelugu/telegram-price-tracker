@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-160 (2026-10-17)';
+const BUILD = 'names-161 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -573,6 +573,17 @@ async function sendTrackingList(ctx, page, mode) {
     // middleware state, and a prototype-shimmed copy is not the same object — so
     // the paging buttons did nothing when pressed. An explicit mode says what we
     // mean without pretending to be something we are not.
+    // SAY WHAT WE SENT. This function has been the subject of two bugs that only
+    // a real run would have caught, and a screenshot cannot tell us whether the
+    // keyboard left the server. One log line settles it: if this prints
+    // "buttons=3" and the user still sees no keyboard, the problem is between
+    // Telegram and their client, not in this code.
+    console.log(
+      'list: ' + (mode === 'edit' ? 'edited' : 'sent') + ' page ' + (current + 1) + '/' + pages +
+        ' for user ' + uid + ' — items=' + pageItems.length + ' buttons=' + buttonRows.length +
+        ' keyboard=' + (opts.reply_markup ? 'yes' : 'NO')
+    );
+
     if (mode === 'edit') {
       try {
         await ctx.editMessageText(text, opts);
@@ -2999,6 +3010,12 @@ module.exports = async (req, res) => {
 
 // Exposed for unit tests.
 module.exports._internals = {
+  // Exported so a test can RUN it against a mock context and assert what it
+  // actually sends. Reading the source is not the same as watching it produce a
+  // keyboard, and this function has now been the subject of two bugs that only a
+  // real run would have caught.
+  sendTrackingList,
+  LIST_PAGE_SIZE,
   betterTitle,
   priceFromText,
   cleanProductName,

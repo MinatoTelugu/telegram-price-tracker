@@ -153,5 +153,13 @@ check('/list 5 -> page 5', parsePage('/list 5') === 4);
 check('/list@Bot 3 -> page 3', parsePage('/list@AiPriceAlertBot 3') === 2);
 check('/mytracks 4 -> page 4', parsePage('/mytracks 4') === 3);
 
+// The send is now logged, so a deployment can be checked from its own logs
+// rather than from a screenshot.
+check('the list logs the page, the item count and the button count',
+  /buttons=' \+ buttonRows\.length/.test(src));
+check('...and whether a keyboard was attached', /keyboard=' \+ \(opts\.reply_markup \? 'yes' : 'NO'\)/.test(src));
+check('...which is the line that settles a "no buttons" report',
+  /keyboard=NO/.test(src) || /'yes' : 'NO'/.test(src));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

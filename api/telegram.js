@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-162 (2026-10-17)';
+const BUILD = 'names-163 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -529,17 +529,13 @@ async function sendTrackingList(ctx, page, mode) {
       // The gap before the next product.
       lines.push('');
 
-      // Its own buttons, numbered to match the item above. Telegram keyboards
-      // attach to a message, so numbering is how we tie a button to its item.
-      if (buttonRows.length < 10) {
-        const row = [];
-        // Buy Now, when there is somewhere to buy. A button that does nothing
-        // is worse than no button, so it is only added when a link exists.
-        if (buy) row.push(Markup.button.url('🛒 Buy ' + index, buy));
-        row.push(Markup.button.callback('📊 History ' + index, 'history:' + it.doc.id));
-        row.push(Markup.button.callback('❌ Stop ' + index, 'untrack:' + it.doc.id));
-        buttonRows.push(row);
-      }
+      // NO PER-ITEM BUTTONS.
+      //
+      // Every action a per-item row offered is already on the item itself, as
+      // text: the "Click here to view in <store>" link buys, the "[ View Price
+      // History! ]" link opens the chart, and /stop_TOKEN stops it. The buttons
+      // added nothing and turned a five-product page into fifteen buttons that
+      // buried the navigation. The keyboard is now only about moving.
     }
     lines.push('');
     lines.push('🦋 <b>Total Products: ' + total + '</b>');

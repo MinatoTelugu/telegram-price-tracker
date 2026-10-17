@@ -298,10 +298,14 @@ async function post(text, id) {
     })
   );
   check(
-    '/mytracks has per-product Stop + History buttons',
+    // The keyboard is navigation only now. The per-item rows were removed on the
+    // user's instruction: Buy, History and Stop are already TEXT on each item —
+    // the store link, the price-history link, and /stop_TOKEN — so the buttons
+    // added nothing and buried the paging controls under fifteen of them.
+    '/mytracks keyboard is navigation only, with no per-item rows',
     r.some((x) => {
       const k = x.extra && x.extra.reply_markup ? JSON.stringify(x.extra.reply_markup) : '';
-      return k.includes('Stop 1') && k.includes('History 1') && k.includes('untrack:');
+      return k && !k.includes('Stop 1') && !k.includes('History 1') && !k.includes('untrack:');
     })
   );
 

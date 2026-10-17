@@ -191,5 +191,25 @@ check('the history keyboard is fixed the same way',
     Object.keys(Object.assign({}, kb).reply_markup).join() === 'inline_keyboard');
 }
 
+// ---------------------------------------------------------------------------
+// THE KEYBOARD IS ONLY NAVIGATION.
+//
+// A screenshot showed the working keyboard as fifteen buttons: a Buy / History /
+// Stop row under each of five products, with the navigation buried underneath.
+// Every one of those actions is already TEXT on the item itself — the store link
+// buys, the price-history link opens the chart, /stop_TOKEN stops it — so the
+// buttons added nothing and hid the thing the keyboard is for.
+// ---------------------------------------------------------------------------
+check('no per-item Buy button', !/button\.url\('🛒 Buy/.test(src));
+check('no per-item History button', !/button\.callback\('📊 History/.test(src));
+check('no per-item Stop button', !/button\.callback\('❌ Stop/.test(src));
+check('the navigation row survives', /'⬅️ Prev'/.test(src) && /'Next ➡️'/.test(src));
+check('the page indicator survives', /' \/ ' \+ pages, 'listpage:'/.test(src));
+check('Home survives', /'🏠 Home', 'home'/.test(src));
+check('...and the actions are still available as text on each item',
+  /Click here to view in/.test(src) && /View Price History/.test(src) && /Click \/stop_/.test(src));
+check('the keyboard is built from nav rows only, not item rows',
+  !/buttonRows\.push\(row\)/.test(src));
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

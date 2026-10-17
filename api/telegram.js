@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-154 (2026-10-17)';
+const BUILD = 'names-155 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -532,10 +532,13 @@ async function sendTrackingList(ctx, page) {
       // Its own buttons, numbered to match the item above. Telegram keyboards
       // attach to a message, so numbering is how we tie a button to its item.
       if (buttonRows.length < 10) {
-        buttonRows.push([
-          Markup.button.callback('❌ Stop ' + index, 'untrack:' + it.doc.id),
-          Markup.button.callback('📊 History ' + index, 'history:' + it.doc.id),
-        ]);
+        const row = [];
+        // Buy Now, when there is somewhere to buy. A button that does nothing
+        // is worse than no button, so it is only added when a link exists.
+        if (buy) row.push(Markup.button.url('🛒 Buy ' + index, buy));
+        row.push(Markup.button.callback('📊 History ' + index, 'history:' + it.doc.id));
+        row.push(Markup.button.callback('❌ Stop ' + index, 'untrack:' + it.doc.id));
+        buttonRows.push(row);
       }
     }
     lines.push('');

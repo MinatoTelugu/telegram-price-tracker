@@ -907,6 +907,33 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   }
 }
 
+// ---------------------------------------------------------------------------
+// ROOT CAUSE of "the card has no name, no price, no image".
+//
+// For Flipkart, lastResortProduct() had exactly ONE route: the reader. There is
+// no hosted Flipkart API, so when the reader returned nothing there was nothing
+// behind it — and the live logs show it returning nothing:
+//
+//   reader fallback gave up: empty body
+//
+// Everything downstream was correct and was being handed nothing. Meanwhile the
+// metadata service was demonstrably working on this deployment (it resolves
+// Flipkart short links) and was never wired into the product fetch.
+// ---------------------------------------------------------------------------
+{
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('the metadata service is a route in the product fetch',
+    /fetchMetadata\(url\)\.catch\(\(\) => null\)/.test(scr));
+  check('...it is imported', /const \{ fetchMetadata \} = require\('\.\/metadata'\)/.test(scr));
+  check('...and it runs alongside the reader, not after it',
+    /const \[page, meta\] = await Promise\.all\(/.test(scr));
+  check('...it can supply the title', /if \(!out\.title && meta\.title && !isStoreTitle\(meta\.title\)\)/.test(scr));
+  check('...and the image', /if \(!out\.image && meta\.image\) out\.image = meta\.image/.test(scr));
+  check('...but NOT the price, which it reports unreliably',
+    !/out\.price = meta\.price/.test(scr) && /deliberately NOT its price/i.test(scr));
+  check('the reader is still there as the primary route', /fetchReadablePage\(url, \{ timeoutMs: 20000/.test(scr));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

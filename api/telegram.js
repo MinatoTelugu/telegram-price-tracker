@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-158 (2026-10-17)';
+const BUILD = 'names-159 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -556,6 +556,15 @@ async function sendTrackingList(ctx, page, mode) {
     // should not depend on how many products you track, and a one-page list with
     // no way out is exactly the trap this replaces.
     buttonRows.push([Markup.button.callback('🏠 Home', 'home')]);
+
+    // Say the pages out loud. Buttons are the normal way to move, but if the
+    // keyboard does not reach the user — an old message scrolled past, a client
+    // that hides keyboards — typing the page must still be discoverable rather
+    // than something they have to guess.
+    if (pages > 1) {
+      lines.push('');
+      lines.push('<i>Tap the buttons, or type</i> <code>/list 2</code> <i>to jump to a page.</i>');
+    }
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
@@ -1885,7 +1894,30 @@ function registerHandlers(bot) {
     await ctx.reply(lines.join('\n'), { parse_mode: 'HTML' });
   });
 
-  bot.command(['mytracks', 'list'], sendTrackingList);
+  /**
+   * /list, and /list 2 to jump straight to a page.
+   *
+   * The buttons are the normal way to page, and they are attached to every list.
+   * This is the fallback for when they are not in front of you — an old message
+   * scrolled past, a client that hides keyboards, or a build where the keyboard
+   * did not arrive. Typing the page number must always work, because a list you
+   * cannot page through is the bug being fixed.
+   *
+   * Telegraf calls a command handler as (ctx, next), so the page is read from the
+   * MESSAGE rather than from the second argument — passing the handler directly
+   * is what made the page number NaN in the first place.
+   */
+  bot.command(['mytracks', 'list'], async (ctx) => {
+    let page = 0;
+    try {
+      const text = String((ctx.message && ctx.message.text) || '');
+      const m = /^\/(?:list|mytracks)(?:@\w+)?\s+(\d+)\s*$/.exec(text.trim());
+      if (m) page = Math.max(0, parseInt(m[1], 10) - 1); // /list 2 means page 2
+    } catch (err) {
+      /* fall back to page 1 */
+    }
+    await sendTrackingList(ctx, page);
+  });
 
   bot.command('untrack', async (ctx) => {
     try {

@@ -126,5 +126,30 @@ check('the main menu is defined once, so /start and Home cannot drift',
   (src.match(/function mainMenu\(\)/g) || []).length === 1);
 check('...and /start uses it', /const \{ caption, keyboard \} = mainMenu\(\)/.test(src));
 
+// ---------------------------------------------------------------------------
+// THE TYPED FALLBACK. A screenshot showed the list rendering items 3-5 with NO
+// keyboard at all. The buttons are attached on every list in this build, so that
+// screenshot predates it — but a list you cannot page through is the bug, so
+// typing the page number now works too, whatever the keyboard does.
+// ---------------------------------------------------------------------------
+check('/list accepts a page number', /bot\.command\(\['mytracks', 'list'\], async \(ctx\)/.test(src));
+check('...read from the message, not from the second argument',
+  /ctx\.message && ctx\.message\.text/.test(src));
+check('...so /list 2 means page 2', /parseInt\(m\[1\], 10\) - 1/.test(src));
+check('...and a group-chat mention is tolerated', /@\\w\+/.test(src));
+check('the message tells the user they can type it', /\/list 2<\/code>/.test(src));
+check('...but only when there is more than one page', /if \(pages > 1\) \{\s*\n\s*lines\.push\(\s*''\);\s*\n\s*lines\.push\('<i>Tap the buttons/.test(src));
+
+// The parse itself, exercised.
+const parsePage = (msg) => {
+  const m = /^\/(?:list|mytracks)(?:@\w+)?\s+(\d+)\s*$/.exec(String(msg).trim());
+  return m ? Math.max(0, parseInt(m[1], 10) - 1) : 0;
+};
+check('/list -> page 1', parsePage('/list') === 0);
+check('/list 2 -> page 2', parsePage('/list 2') === 1);
+check('/list 5 -> page 5', parsePage('/list 5') === 4);
+check('/list@Bot 3 -> page 3', parsePage('/list@AiPriceAlertBot 3') === 2);
+check('/mytracks 4 -> page 4', parsePage('/mytracks 4') === 3);
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

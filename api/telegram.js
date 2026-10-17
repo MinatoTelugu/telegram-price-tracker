@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-157 (2026-10-17)';
+const BUILD = 'names-158 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -922,10 +922,38 @@ function quickClassify(raw) {
  * page, updates the record, and EDITS the message we already sent — so the user
  * sees one card that fills itself in rather than waiting a minute for it.
  */
+/** The marketplace for a bare url, for the enrichment fallback path. */
+function detectMarketplaceFromUrl(raw) {
+  const u = String(raw || '');
+  if (/amazon\./i.test(u)) return 'amazon';
+  if (/flipkart\.com|fkrt\.|dl\.flipkart/i.test(u)) return 'flipkart';
+  return null;
+}
+
 async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
   try {
-    const result = await convertAffiliateLink(rawUrl);
-    if (!result || !result.ok) return;
+    // THE AFFILIATE CONVERSION IS NOT A PRECONDITION.
+    //
+    // This used to be:
+    //     const result = await convertAffiliateLink(rawUrl);
+    //     if (!result || !result.ok) return;
+    // — so when conversion failed, the function returned immediately and the
+    // product's name, price and image were NEVER FETCHED. On Flipkart conversion
+    // fails often (the converter times out, or the store throttles us), which is
+    // why a tracked card could sit on "Finding the product name…" forever while
+    // the record itself was saved correctly.
+    //
+    // Converting is about EARNING on the link. Fetching the product is about
+    // TRACKING it. They are independent, and the second must not be blocked by
+    // the first. The record we already have carries a url; that is enough.
+    const result = await convertAffiliateLink(rawUrl).catch(() => null);
+    if (!result || !result.ok) {
+      console.warn(
+        'enrich: could not convert ' + String(rawUrl).slice(0, 60) +
+          ' — fetching the product anyway so the card gets its name and price'
+      );
+    }
+    const usable = result && result.ok ? result : { ok: true, marketplace: null, productId: null, cleanUrl: rawUrl, affiliateUrl: null, resolvedUrl: null };
 
     // SEED from what the card ALREADY shows. This function EDITS the message, so
     // starting from blank means a failed lookup BLANKS a field the early reply
@@ -935,7 +963,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     // From here on, every lookup may only IMPROVE a field, never clear it.
     const prior = existing || {};
     let info = {
-      title: prior.title || titleFromUrl(result.resolvedUrl || rawUrl || result.cleanUrl),
+      title: prior.title || titleFromUrl(usable.resolvedUrl || rawUrl || usable.cleanUrl),
       price: prior.price != null ? prior.price : null,
       currency: prior.currency || 'INR',
       imageUrl: prior.imageUrl || null,
@@ -945,9 +973,12 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     const [scraped, viaConverter] = await Promise.all([
       // Generous on purpose: this runs AFTER the reply, so a longer budget costs
       // the user nothing and is what lets the card gain its price.
-      withTimeout(fetchProduct(result.affiliateUrl || result.cleanUrl, result.marketplace), 7000).catch(() => null),
-      result.affiliateUrl && result.affiliateUrl !== result.cleanUrl
-        ? withTimeout(resolveShortUrl(result.affiliateUrl), 4000).catch(() => null)
+      withTimeout(
+        fetchProduct(usable.affiliateUrl || usable.cleanUrl || rawUrl, usable.marketplace || detectMarketplaceFromUrl(rawUrl)),
+        7000
+      ).catch(() => null),
+      usable.affiliateUrl && usable.affiliateUrl !== usable.cleanUrl
+        ? withTimeout(resolveShortUrl(usable.affiliateUrl), 4000).catch(() => null)
         : Promise.resolve(null),
     ]);
 
@@ -967,24 +998,24 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     }
     if (viaConverter) {
       const fromLink = titleFromUrl(viaConverter);
-      if (isUsableTitle(fromLink, result.productId)) {
+      if (isUsableTitle(fromLink, usable.productId)) {
         info.title = fromLink;
         info.resolvedUrl = viaConverter;
       }
     }
-    if (!isUsableTitle(info.title, result.productId)) {
+    if (!isUsableTitle(info.title, usable.productId)) {
       const resolved = await withTimeout(
         resolveProductName({
-          marketplace: result.marketplace,
-          productId: result.productId,
-          cleanUrl: result.cleanUrl,
-          affiliateUrl: result.affiliateUrl,
-          resolvedUrl: result.resolvedUrl,
+          marketplace: usable.marketplace,
+          productId: usable.productId,
+          cleanUrl: usable.cleanUrl,
+          affiliateUrl: usable.affiliateUrl,
+          resolvedUrl: usable.resolvedUrl,
         }),
         4000
       ).catch(() => null);
       const name = (resolved && resolved.title) || titleFromUrl((resolved && resolved.resolvedUrl) || '');
-      if (isUsableTitle(name, result.productId)) {
+      if (isUsableTitle(name, usable.productId)) {
         info.title = name;
         if (resolved.resolvedUrl) info.resolvedUrl = resolved.resolvedUrl;
       }
@@ -992,8 +1023,8 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
 
     // Still nothing? Our IP is refused by the store (Amazon especially). Ask a
     // metadata service, which fetches the page from its own servers.
-    if (!isUsableTitle(info.title, result.productId)) {
-      const meta = await fetchMetadata(result.cleanUrl || result.affiliateUrl).catch(() => null);
+    if (!isUsableTitle(info.title, usable.productId)) {
+      const meta = await fetchMetadata(usable.cleanUrl || usable.affiliateUrl).catch(() => null);
       console.log(
         'track: metadata fallback -> ' +
           (meta
@@ -1003,9 +1034,9 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
       if (meta) {
         const named = betterTitle(
           isGenericStoreTitle(meta.title) ? null : meta.title,
-          titleFromUrl(result.cleanUrl || '')
+          titleFromUrl(usable.cleanUrl || '')
         );
-        if (isUsableTitle(named, result.productId)) {
+        if (isUsableTitle(named, usable.productId)) {
           info.title = named;
           console.log('track: recovered the name via metadata — ' + String(named).slice(0, 70));
         }
@@ -1023,12 +1054,12 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     // Still nothing? Read the page THROUGH a reader service. Amazon refuses this
     // host, so this is the route that can actually see the product page — and
     // its text gives us both the name and a price.
-    if (!isUsableTitle(info.title, result.productId) || info.price == null) {
+    if (!isUsableTitle(info.title, usable.productId) || info.price == null) {
       // This runs AFTER the user has been answered, so latency costs nothing and
       // a long budget is free. The reader renders the page on its own servers —
       // Amazon especially — and at the old 8s default it was timing out on every
       // attempt, which is why the price never arrived for Amazon links.
-      const page = await fetchReadablePage(result.cleanUrl || result.affiliateUrl, {
+      const page = await fetchReadablePage(usable.cleanUrl || usable.affiliateUrl, {
         timeoutMs: 25000,
         attempts: 2,
       }).catch(() => null);
@@ -1036,9 +1067,9 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
         if (page.title) {
           const named = betterTitle(
             isGenericStoreTitle(page.title) ? null : page.title,
-            titleFromUrl(result.cleanUrl || '')
+            titleFromUrl(usable.cleanUrl || '')
           );
-          if (isUsableTitle(named, result.productId)) {
+          if (isUsableTitle(named, usable.productId)) {
             info.title = named;
             console.log('track: name recovered via the reader — ' + String(named).slice(0, 70));
           }
@@ -1061,20 +1092,20 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
     // (1,000 calls/month), so it is only reached when the page, the metadata
     // service, the reader and the search API all came back empty.
     if (
-      result.marketplace === 'amazon' &&
+      usable.marketplace === 'amazon' &&
       amazonApiConfigured() &&
-      (!isUsableTitle(info.title, result.productId) ||
+      (!isUsableTitle(info.title, usable.productId) ||
         info.price == null ||
         !info.imageUrl)
     ) {
-      const item = await lookupAsin(result.productId).catch(() => null);
+      const item = await lookupAsin(usable.productId).catch(() => null);
       if (item) {
         if (item.title) {
           const named = betterTitle(
             isGenericStoreTitle(item.title) ? null : item.title,
-            info.title || titleFromUrl(result.cleanUrl || '')
+            info.title || titleFromUrl(usable.cleanUrl || '')
           );
-          if (isUsableTitle(named, result.productId)) info.title = named;
+          if (isUsableTitle(named, usable.productId)) info.title = named;
         }
         if (info.price == null && item.price != null) info.price = item.price;
         if (!info.imageUrl && item.image) info.imageUrl = item.image;
@@ -1107,7 +1138,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
             )
           );
           await ctx.telegram.deleteMessage(ctx.chat.id, sentMessage.message_id).catch(() => {});
-          console.log('track: upgraded the card to a photo card for ' + result.productId);
+          console.log('track: upgraded the card to a photo card for ' + usable.productId);
           return;
         } catch (err) {
           console.warn('photo upgrade failed, editing text instead:', err.message);
@@ -1127,7 +1158,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
         await ctx.telegram
           .editMessageCaption(ctx.chat.id, sentMessage.message_id, undefined, text, editOptions)
           .catch(() => {});
-        console.log('track: enriched photo caption for ' + result.productId);
+        console.log('track: enriched photo caption for ' + usable.productId);
       } else if (ctx.telegram.editMessageText) {
         await ctx.telegram
           .editMessageText(
@@ -1138,7 +1169,7 @@ async function enrichTracked(ctx, sentMessage, rawUrl, from, existing) {
             Object.assign({ link_preview_options: { is_disabled: true } }, editOptions)
           )
           .catch(() => {});
-        console.log('track: enriched message for ' + result.productId);
+        console.log('track: enriched message for ' + usable.productId);
       }
     }
   } catch (err) {

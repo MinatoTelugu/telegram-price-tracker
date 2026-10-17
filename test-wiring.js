@@ -967,6 +967,37 @@ for (const mod of ['./api/deals.js', './api/cron.js', './lib/shortlink.js', './l
   check('the query is still bounded', /\.limit\(30\)/.test(tg));
 }
 
+// ---------------------------------------------------------------------------
+// THE PERSISTENT "Finding the product name…".
+//
+// enrichTracked() began with:
+//     const result = await convertAffiliateLink(rawUrl);
+//     if (!result || !result.ok) return;
+// so when affiliate conversion failed, it returned IMMEDIATELY and the product's
+// name, price and image were never fetched. On Flipkart conversion fails often —
+// the converter times out, or the store throttles us — which is why a tracked
+// card could sit on the placeholder forever while the record itself saved fine.
+//
+// Converting earns on the link. Fetching tracks the product. Independent things.
+// ---------------------------------------------------------------------------
+{
+  const tg = fs.readFileSync(__dirname + '/api/telegram.js', 'utf8');
+  check('the enrichment no longer bails out when conversion fails',
+    !/const result = await convertAffiliateLink\(rawUrl\);\s*\n\s*if \(!result \|\| !result\.ok\) return;/.test(tg));
+  check('...it falls back to the url it already has',
+    /const usable = result && result\.ok \? result : \{ ok: true, marketplace: null/.test(tg));
+  check('...and says so in the log', /fetching the product anyway so the card gets its name and price/.test(tg));
+  check('...fetching the product from the fallback url',
+    /fetchProduct\(usable\.affiliateUrl \|\| usable\.cleanUrl \|\| rawUrl/.test(tg));
+  check('...with the marketplace detected from the url when conversion did not supply it',
+    /detectMarketplaceFromUrl\(rawUrl\)/.test(tg));
+  check('...and no later reference can dereference a null result',
+    !/\bresult\.(productId|cleanUrl|affiliateUrl|resolvedUrl|marketplace)/.test(
+      tg.slice(tg.indexOf('async function enrichTracked'), tg.indexOf('async function enrichTracked') + 3000)
+        .replace(/if \(!result \|\| !result\.ok\)/, '')
+    ));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 // Exit explicitly: requiring the network stack can trip the sandbox's
 // WebAssembly memory limit during shutdown, which would mask the result.

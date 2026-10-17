@@ -33,7 +33,7 @@ const crypto = require('crypto');
 
 // Bump this whenever behaviour changes. /diag prints it, so we can tell at a
 // glance whether the running deployment is the newest code or an old build.
-const BUILD = 'names-152 (2026-10-17)';
+const BUILD = 'names-153 (2026-10-17)';
 const {
   convertAffiliateLink,
   resolveShortUrl,
@@ -331,7 +331,17 @@ function isRateLimited(userId) {
 const LIST_CACHE = new Map();
 const LIST_CACHE_MINUTES = Math.max(1, parseInt(process.env.LIST_CACHE_MINUTES || '15', 10));
 
-async function sendTrackingList(ctx) {
+/**
+ * How many products fit on one page of /list.
+ *
+ * Five, because each product takes three lines and two buttons. Thirty products
+ * — the old limit — is a message 200 lines long with sixty buttons, which is
+ * near Telegram's keyboard ceiling and unreadable on a phone. A page of five
+ * fits on one screen, and the buttons stay under the thumb.
+ */
+const LIST_PAGE_SIZE = Math.max(1, parseInt(process.env.LIST_PAGE_SIZE || '5', 10));
+
+async function sendTrackingList(ctx, page) {
   try {
     if (!ctx.from) return;
     if (!db) {
@@ -341,7 +351,8 @@ async function sendTrackingList(ctx) {
     const uid = String(ctx.from.id);
 
     // A recent copy costs nothing and cannot be refused.
-    const cached = LIST_CACHE.get(uid);
+    const cacheKey = uid + ':' + (page || 0);
+    const cached = LIST_CACHE.get(cacheKey);
     if (cached && Date.now() - cached.at < LIST_CACHE_MINUTES * 60 * 1000) {
       await ctx.reply(cached.text, cached.opts);
       return;
@@ -427,10 +438,20 @@ async function sendTrackingList(ctx) {
       }
     }
 
-    const lines = ['🛍️ <b>Your tracked products</b> (' + items.length + ')', ''];
+    const total = items.length;
+    const pages = Math.max(1, Math.ceil(total / LIST_PAGE_SIZE));
+    const current = Math.min(Math.max(0, page || 0), pages - 1);
+    const start = current * LIST_PAGE_SIZE;
+    const pageItems = items.slice(start, start + LIST_PAGE_SIZE);
+
+    const heading =
+      pages > 1
+        ? '🛍️ <b>Your tracked products</b> (' + total + ')  ·  page ' + (current + 1) + '/' + pages
+        : '🛍️ <b>Your tracked products</b> (' + total + ')';
+    const lines = [heading, ''];
     const buttonRows = [];
-    let index = 0;
-    for (const it of items) {
+    let index = start;
+    for (const it of pageItems) {
       index++;
       const d = it.data;
       const rawToken = d.stopToken || stopTokenFor(it.doc.id);
@@ -513,12 +534,21 @@ async function sendTrackingList(ctx) {
       }
     }
     lines.push('');
-    lines.push('🦋 <b>Total Products: ' + items.length + '</b>');
+    lines.push('🦋 <b>Total Products: ' + total + '</b>');
+
+    // Prev / page-indicator / Next, only when there is more than one page.
+    if (pages > 1) {
+      const nav = [];
+      if (current > 0) nav.push(Markup.button.callback('⬅️ Prev', 'listpage:' + (current - 1)));
+      nav.push(Markup.button.callback((current + 1) + ' / ' + pages, 'listpage:' + current));
+      if (current < pages - 1) nav.push(Markup.button.callback('Next ➡️', 'listpage:' + (current + 1)));
+      buttonRows.push(nav);
+    }
 
     const opts = { parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
     if (buttonRows.length) opts.reply_markup = Markup.inlineKeyboard(buttonRows);
     const text = lines.join('\n');
-    LIST_CACHE.set(uid, { text, opts, at: Date.now() });
+    LIST_CACHE.set(uid + ':' + (page || 0), { text, opts, at: Date.now() });
     await ctx.reply(text, opts);
   } catch (err) {
     quotaGuard.noteError(err);
@@ -530,7 +560,7 @@ async function sendTrackingList(ctx) {
     // trace was a stack trace in the Koyeb log. A command that fails silently is
     // indistinguishable from a bot that is down.
     try {
-      const stale = ctx.from && LIST_CACHE.get(String(ctx.from.id));
+      const stale = ctx.from && LIST_CACHE.get(String(ctx.from.id) + ':' + (page || 0));
       if (stale) {
         // The database is refusing us, but we already know what this list looked
         // like. Show it, and say plainly that it is the last known copy rather
@@ -2573,6 +2603,29 @@ function registerHandlers(bot) {
   });
 
   // "📋 My List" button on the welcome message.
+  // Page navigation. Re-renders the same list at another offset and EDITS the
+  // message, so paging never litters the chat with copies of the list.
+  bot.action(/^listpage:(\d+)$/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery().catch(() => {});
+      const page = parseInt(ctx.match[1], 10) || 0;
+      // Re-render into a throwaway context that edits instead of replying.
+      const editing = Object.create(ctx);
+      editing.reply = async (text, opts) => {
+        try {
+          await ctx.editMessageText(text, opts);
+        } catch (err) {
+          // Telegram refuses an edit that changes nothing — not an error.
+          if (!/message is not modified/i.test(err.message)) throw err;
+        }
+      };
+      await sendTrackingList(editing, page);
+    } catch (err) {
+      console.error('list page failed:', err.message);
+      await ctx.answerCbQuery('Could not load that page.').catch(() => {});
+    }
+  });
+
   bot.action('mylist', async (ctx) => {
     try {
       if (ctx.answerCbQuery) await ctx.answerCbQuery().catch(() => {});

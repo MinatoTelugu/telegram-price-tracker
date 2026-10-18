@@ -64,5 +64,31 @@ check('entities are decoded', reader.htmlToText('<div>&#8377;99 &amp; up</div>')
 check('block elements become newlines, so clauses split',
   reader.htmlToText('<div>a</div><div>b</div>').split('\n').length >= 2);
 
+// ---------------------------------------------------------------------------
+// A SAMPLE SCRAPER WAS SENT FOR REVIEW. Its JSON-LD idea is right and is already
+// implemented here — for price, title AND availability. Its fallback is not:
+//
+//   re.search(r'"price"\s*:\s*"?(\d{3,7})', html)
+//
+// That matches the first "price": anywhere in the document, including inside a
+// <script>. Demonstrated below against a realistic page.
+// ---------------------------------------------------------------------------
+const scraper = require('./lib/scraper.js');
+check('JSON-LD price extraction exists', /function priceFromJsonLd/.test(fs.readFileSync(path.join(__dirname, 'lib/scraper.js'), 'utf8')));
+check('...and it is used in the price chain',
+  /\['json-ld', \(\) => priceFromJsonLd\(\$\)\]/.test(fs.readFileSync(path.join(__dirname, 'lib/scraper.js'), 'utf8')));
+check('...alongside title and availability from JSON-LD',
+  typeof scraper.titleFromJsonLd === 'function' && typeof scraper.availabilityFromJsonLd === 'function');
+
+// The sample's regex, and why it is not used.
+{
+  const sampleRegex = /"price"\s*:\s*"?(\d{3,7})/;
+  const page = '<html><head><script>window.__D={"analytics":{"price":999999}};</script></head>' +
+    '<body><script type="application/ld+json">{"@type":"Product","offers":{"price":"19130"}}</script></body></html>';
+  const got = sampleRegex.exec(page);
+  check('the sample regex would read a number out of a script', got && got[1] === '999999', got && got[1]);
+  check('...which is not the price', got && got[1] !== '19130');
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

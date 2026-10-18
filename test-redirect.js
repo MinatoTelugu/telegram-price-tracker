@@ -371,6 +371,26 @@ Promise.race([
     scraperSrc.includes('\\s*([\\d,]+(?:\\.\\d{1,2})?)/i.exec(t)'));
 }
 
+// ---------------------------------------------------------------------------
+// THE FAILURE REASON MUST DISTINGUISH REFUSAL FROM A PARSER MISS.
+//
+// The two lead to opposite actions and the final return used to report
+// price_not_found for both:
+//   price_not_found -> the page was reached, so fix the parser
+//   blocked         -> the store refused this host, so no parser fix can help
+//                      and the reader routes are the only way in
+// ---------------------------------------------------------------------------
+{
+  const scr = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+  check('a refusal is remembered, not just returned once',
+    /directBlocked = true;/.test(scr));
+  check('...declared per call', /let directBlocked = false;/.test(scr));
+  check('...and the final return reports it as blocked',
+    /reason: directBlocked \? 'blocked' : 'price_not_found'/.test(scr));
+  check('the reader is still tried after a refusal, so the reason reflects both',
+    /lastResortProduct/.test(scr));
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 });

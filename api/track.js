@@ -69,6 +69,11 @@ module.exports = async (req, res) => {
           lastPrice: data.lastPrice != null ? data.lastPrice : null,
           mrp: data.mrp != null ? data.mrp : null,
           inStock: typeof data.inStock === 'boolean' ? data.inStock : null,
+          // WHY the last price check failed, when it did. The cron stores this on the
+          // document (price_not_found / blocked / http_403 / http_429) and it was never
+          // exposed — so a blank price gave no way to tell a parser miss from the store
+          // refusing us. That distinction decides whether code changes can help at all.
+          lastCheckError: data.lastCheckError || null,
           lastCheckedAt:
             data.lastCheckedAt && data.lastCheckedAt.toMillis ? data.lastCheckedAt.toMillis() : null,
           affiliateUrl: data.affiliateUrl || null,

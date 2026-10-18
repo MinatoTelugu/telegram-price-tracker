@@ -330,7 +330,48 @@ Promise.race([
   const ms = Date.now() - started;
   check('a slow route releases the caller in seconds, not minutes', ms <= mod.EXPAND_DEADLINE_MS + 500, 'took ' + ms + 'ms');
   check('...returning null so the caller can fail cleanly', v === null);
-  console.log('\n' + pass + ' passed, ' + fail + ' failed');
+  // ---------------------------------------------------------------------------
+// THE DIAGNOSIS FROM THE FIELD.
+//
+// A product is live at Rs 14,799 on Flipkart, and the bot shows "—" for every
+// price, STOCK UNKNOWN and PRICE READINGS: 0, with "Updated: 18 Oct 05:30" —
+// so the cron RAN and fetchProduct returned ok:false. The doc carries
+// lastCheckError (price_not_found / blocked / http_403 / http_429) and nothing
+// ever exposed it, so a blank price could not be told from a blocked fetch.
+// That distinction decides whether a parser fix can help at all.
+// ---------------------------------------------------------------------------
+{
+  const track = fs.readFileSync(__dirname + '/api/track.js', 'utf8');
+  const cron = fs.readFileSync(__dirname + '/api/cron.js', 'utf8');
+  const scraperSrc = fs.readFileSync(__dirname + '/lib/scraper.js', 'utf8');
+
+  check('/api/track exposes lastCheckError', /lastCheckError: data\.lastCheckError \|\| null/.test(track));
+  check('the cron stores it on failure', /lastCheckError: result\.reason/.test(cron));
+  check('...and clears it on success', /lastCheckError: null/.test(cron));
+  check('...recording the attempt time even on failure, so rotation moves on',
+    /lastCheckedAt: FieldValue\.serverTimestamp\(\),[\s\S]{0,80}lastCheckError: result\.reason/.test(cron));
+
+  // The discount triple, in every form the readers emit.
+  const { priceFromTextMatch } = require('./lib/scraper.js');
+  const cases = [
+    ['\u219322%  ~~18,999~~  \u20b914,799', 14799],
+    ['22% off  \u20b918,999 \u20b914,799', 14799],
+    ['\u219345%   33,999   \u20b918,799', 18799],
+    ['22% off \u20b914,799', 14799],
+    ['<s>\u20b918,999</s> \u20b914,799', 14799],
+    ['\u20b914,799', 14799],
+  ];
+  for (const [text, want] of cases) {
+    const r = priceFromTextMatch(text);
+    check('discount triple: ' + JSON.stringify(text), r && r.price === want, r && r.price);
+  }
+  check('the percent is optional, not required',
+    scraperSrc.includes('(?:\\d{1,2}\\s*%\\s*(?:off\\b)?)?'));
+  check('...and only the PRICE is captured, so m[1] stays the price',
+    scraperSrc.includes('\\s*([\\d,]+(?:\\.\\d{1,2})?)/i.exec(t)'));
+}
+
+console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 });
 })();
